@@ -11,18 +11,12 @@ class QuaestorCrew:
 	agents_config = 'config/agents.yaml'
 	tasks_config = 'config/tasks.yaml'
 
-	# Initialize LLM
-	llm = LLM(
-		model="gpt-4o",
-		api_key=os.getenv("OPENAI_API_KEY")
-	)
 
 	@agent
 	def market_optimizer(self) -> Agent:
 		return Agent(
 			config=self.agents_config['market_optimizer'],
 			tools=[GasTools()],
-			llm=self.llm,
 			verbose=True
 		)
 
@@ -31,7 +25,6 @@ class QuaestorCrew:
 		return Agent(
 			config=self.agents_config['treasury_analyst'],
 			tools=[TreasuryTools()],
-			llm=self.llm,
 			verbose=True
 		)
 
@@ -40,7 +33,6 @@ class QuaestorCrew:
 		return Agent(
 			config=self.agents_config['compliance_officer'],
 			tools=[EmailTools()],
-			llm=self.llm,
 			verbose=True
 		)
 

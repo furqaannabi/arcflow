@@ -13,3 +13,7 @@ dependencies = [
     "resend>=2.21.0",
     "uvicorn>=0.40.0",
 ]
+
+
+[project.scripts]
+run_crew = "quaestor.main:run"
