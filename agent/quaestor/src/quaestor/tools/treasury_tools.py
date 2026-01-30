@@ -12,19 +12,22 @@ class TreasuryTools:
         # TODO: Add contract addresses once deployed
         self.treasury_contract = None  # Will be the PayrollGuard Hook address
     
-    def get_treasury_position(self, company_id: str) -> dict:
+    def get_treasury_position(self, pool_address: str, owner_address: str) -> dict:
         """
-        Get current treasury position for a company
-        Returns: principal, yield_earned, total
+        Get current treasury position for an LP position
+        
+        Args:
+            pool_address: Uniswap v4 pool contract address
+            owner_address: Wallet address that owns the position
         """
-        # TODO: Call Uniswap v4 pool to get position
-        # For now, mock data:
+        # TODO: Query Uniswap v4 pool with owner_address
         return {
-            "company_id": company_id,
-            "principal": 50000.00,      # USDC deposited
-            "yield_earned": 150.00,     # Yield from LP fees
+            "pool_address": pool_address,
+            "owner_address": owner_address,
+            "principal": 50000.00,
+            "yield_earned": 150.00,
             "total": 50150.00,
-            "chain_id": 8453,           # Base
+            "chain_id": 8453,
             "token": "USDC"
         }
     
