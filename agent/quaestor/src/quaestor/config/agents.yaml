@@ -14,6 +14,7 @@ market_optimizer:
     You are conservative with company funds but understand that employees need to be paid on time.
   tools:
     - gas_tools
+  llm: openai/gpt-4o
 
 treasury_analyst:
   role: "Treasury Analyst"
@@ -30,6 +31,7 @@ treasury_analyst:
     You value accuracy above all else. A single cent miscalculated is unacceptable.
   tools:
     - treasury_tools
+  llm: openai/gpt-4o
 
 compliance_officer:
   role: "Compliance & Notification Officer"
@@ -45,3 +47,4 @@ compliance_officer:
     You communicate clearly, professionally, and provide actionable options (e.g., override links) in every message.
   tools:
     - email_tools
+  llm: openai/gpt-4o-mini
