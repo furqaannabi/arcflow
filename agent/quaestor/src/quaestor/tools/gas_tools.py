@@ -14,16 +14,18 @@ CHAIN_RPC = {
     8453: f"https://base-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}",
     137: f"https://polygon-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}",
     11155111: f"https://eth-sepolia.g.alchemy.com/v2/{ALCHEMY_API_KEY}",
+    5042002: f"https://arc-testnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}",
 }
 
 # Thresholds per chain (in gwei)
 CHAIN_THRESHOLDS = {
-    1: {"execute": 25, "wait": 50},        # Ethereum
-    42161: {"execute": 0.1, "wait": 0.5},  # Arbitrum
-    10: {"execute": 0.1, "wait": 0.5},     # Optimism
-    8453: {"execute": 0.1, "wait": 0.5},   # Base
-    137: {"execute": 100, "wait": 300},    # Polygon
-    11155111:{"execute": 5, "wait": 10},    # Sepolia
+    1: {"optimal": 25, "max": 50},        # Ethereum
+    42161: {"optimal": 0.1, "max": 0.5},  # Arbitrum
+    10: {"optimal": 0.1, "max": 0.5},     # Optimism
+    8453: {"optimal": 0.1, "max": 0.5},   # Base
+    137: {"optimal": 100, "max": 300},    # Polygon
+    11155111: {"optimal": 5, "max": 10},  # Sepolia
+    5042002: {"optimal": 0.1, "max": 0.5}, # Arc-testnet
 }
 
 
@@ -59,12 +61,11 @@ class GasTools:
     def should_execute(self, chain_id: int) -> dict:
         """Check gas and return execution decision"""
         current_gas = self.get_current_gas_price(chain_id)
-        thresholds = self.chain_thresholds.get(chain_id, {"execute": 25, "wait": 50})
+        thresholds = self.chain_thresholds.get(chain_id, {"optimal": 25, "max": 50})
         
-        #check if gas price is within threshold
-        if current_gas <= thresholds["execute"]:
+        if current_gas <= thresholds["optimal"]:
             return {"decision": "EXECUTE", "gas": current_gas}
-        elif current_gas <= thresholds["wait"]:
+        elif current_gas <= thresholds["max"]:
             return {"decision": "WAIT", "gas": current_gas}
         else:
             return {"decision": "WAIT_URGENT", "gas": current_gas}
