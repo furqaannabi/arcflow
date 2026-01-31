@@ -70,10 +70,17 @@ class CircleGatewayService:
         
         self.base_url = self.SANDBOX_URL if self.use_sandbox else self.PRODUCTION_URL
         
-        # Check if we're in mock mode
-        self.mock_mode = not self.api_key
-        if self.mock_mode:
-            print("⚠️ CircleGatewayService: No API key found, running in MOCK mode")
+        # Bridge Kit service URL (Node.js microservice)
+        self.bridge_service_url = os.getenv("BRIDGE_SERVICE_URL", "http://localhost:3001")
+        
+        # Use Bridge Kit if service is available, otherwise mock
+        self.use_bridge_kit = os.getenv("USE_BRIDGE_KIT", "true").lower() == "true"
+        self.mock_mode = not self.api_key and not self.use_bridge_kit
+        
+        if self.use_bridge_kit:
+            print(f"🌉 CircleGatewayService: Using Bridge Kit at {self.bridge_service_url}")
+        elif self.mock_mode:
+            print("⚠️ CircleGatewayService: Running in MOCK mode")
     
     def _get_headers(self) -> dict:
         """Get headers for Circle API requests."""
@@ -113,11 +120,10 @@ class CircleGatewayService:
         source_chain_id: int = 11155111  # Default: Ethereum Sepolia
     ) -> TransferResult:
         """
-        Execute a cross-chain USDC transfer via Circle Gateway.
+        Execute a cross-chain USDC transfer via Circle Bridge Kit.
         
-        This uses the burn-and-mint mechanism:
-        1. Burn USDC on source chain
-        2. Mint equivalent on destination chain
+        Uses Node.js bridge-service for actual cross-chain transfers.
+        Falls back to mock mode if service unavailable.
         
         Args:
             amount: USDC amount to transfer
@@ -128,30 +134,51 @@ class CircleGatewayService:
         Returns:
             TransferResult with transaction details
         """
+        # Use Bridge Kit service
+        if self.use_bridge_kit:
+            return self._transfer_via_bridge_kit(
+                amount, recipient_address, dest_chain_id, source_chain_id
+            )
+        
+        # Fallback to mock
         if self.mock_mode:
             return self._mock_cross_chain_transfer(
                 amount, recipient_address, dest_chain_id, source_chain_id
             )
         
+        # Legacy: direct API mode (not implemented)
+        return TransferResult(
+            success=False,
+            error="Direct API mode not implemented. Use Bridge Kit."
+        )
+    
+    def _transfer_via_bridge_kit(
+        self,
+        amount: float,
+        recipient_address: str,
+        dest_chain_id: int,
+        source_chain_id: int
+    ) -> TransferResult:
+        """Execute transfer via Bridge Kit Node.js service."""
         try:
-            # Step 1: Create burn intent
-            burn_intent = self._create_burn_intent(
-                amount, recipient_address, source_chain_id, dest_chain_id
+            response = requests.post(
+                f"{self.bridge_service_url}/bridge",
+                json={
+                    "amount": str(amount),
+                    "from_chain_id": source_chain_id,
+                    "to_chain_id": dest_chain_id,
+                    "recipient": recipient_address
+                },
+                timeout=120  # Cross-chain can take time
             )
             
-            if not burn_intent.get("success"):
-                return TransferResult(
-                    success=False,
-                    error=burn_intent.get("error", "Failed to create burn intent")
-                )
+            data = response.json()
             
-            # Step 2: Submit to Gateway API
-            transfer_response = self._submit_transfer(burn_intent)
-            
-            if transfer_response.get("success"):
+            if data.get("success"):
+                print(f"✅ Bridge transfer complete: {data.get('tx_hash', 'N/A')}")
                 return TransferResult(
                     success=True,
-                    tx_hash=transfer_response.get("tx_hash"),
+                    tx_hash=data.get("tx_hash"),
                     amount=amount,
                     source_chain=source_chain_id,
                     dest_chain=dest_chain_id
@@ -159,9 +186,17 @@ class CircleGatewayService:
             else:
                 return TransferResult(
                     success=False,
-                    error=transfer_response.get("error", "Transfer failed")
+                    amount=amount,
+                    source_chain=source_chain_id,
+                    dest_chain=dest_chain_id,
+                    error=data.get("error", "Bridge transfer failed")
                 )
                 
+        except requests.exceptions.ConnectionError:
+            print(f"⚠️ Bridge service not available at {self.bridge_service_url}")
+            return self._mock_cross_chain_transfer(
+                amount, recipient_address, dest_chain_id, source_chain_id
+            )
         except Exception as e:
             return TransferResult(success=False, error=str(e))
     
