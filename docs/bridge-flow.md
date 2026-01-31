@@ -48,6 +48,44 @@ flowchart TD
 
 ---
 
+## Protocol Wallet Authorization
+
+The **Protocol Wallet** (`PRIVATE_KEY` in `bridge-service/.env`) is the ArcFlow protocol's address that has special permissions on each employer's escrow contract.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     ESCROW CONTRACT                             │
+│                                                                 │
+│  constructor(employer, protocol) {                              │
+│      this.employer = employer;     // Employer's address        │
+│      this.protocol = protocol;     // ArcFlow Protocol Wallet   │
+│  }                                                              │
+│                                                                 │
+│  modifier onlyProtocol() {                                      │
+│      require(msg.sender == protocol, "Not authorized");         │
+│  }                                                              │
+│                                                                 │
+│  function executePayroll(...) onlyProtocol {                    │
+│      // Only Protocol Wallet can call this                      │
+│      // Withdraws from LP and bridges to employees              │
+│  }                                                              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### How it works:
+
+1. **Escrow Deployment**: When employer creates escrow, the protocol wallet address is set as authorized
+2. **Payroll Trigger**: Quaestor AI agent signs transaction with `PRIVATE_KEY`
+3. **On-chain Verification**: Escrow contract checks `msg.sender == protocol`
+4. **Execution**: If authorized, escrow withdraws from LP and bridges to recipients
+
+### Key Point:
+
+> **The Protocol Wallet does NOT own the funds.** It only has permission to call `executePayroll()`. 
+> The Escrow Contract enforces that funds can only go to the configured recipients on the configured chains.
+
+---
+
 ## Flow 1: Employer Deposit
 
 ```mermaid
@@ -126,28 +164,35 @@ sequenceDiagram
 ┌─────────────────────────────────────────────────────────────────┐
 │                     ESCROW FACTORY                               │
 │  - Deploys new escrow per employer                              │
+│  - Sets protocol wallet address on each escrow                  │
 │  - Tracks all escrows                                           │
 └─────────────────────────────────────────────────────────────────┘
                               │
-                              │ creates
+                              │ creates (with protocol address)
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                   PAYROLL ESCROW (per employer)                  │
 ├─────────────────────────────────────────────────────────────────┤
 │  State:                                                          │
-│    - employer: address (owner)                                  │
-│    - protocol: address (ArcFlow)                                │
+│    - employer: address (owner who deposited)                    │
+│    - protocol: address (ArcFlow Protocol Wallet - PRIVATE_KEY)  │
 │    - lpPositionId: uint256                                      │
 │    - payrollConfig: Recipients[], amounts[], chains[]           │
 ├─────────────────────────────────────────────────────────────────┤
-│  Employer Functions:                                             │
+│  Access Control:                                                 │
+│    - onlyEmployer: require(msg.sender == employer)              │
+│    - onlyProtocol: require(msg.sender == protocol)              │
+├─────────────────────────────────────────────────────────────────┤
+│  Employer Functions (onlyEmployer):                              │
 │    - deposit(amount) → adds to LP                               │
-│    - withdraw(amount) → removes from LP                         │
+│    - withdraw(amount) → removes from LP, sends to employer      │
 │    - setPayrollConfig(...) → update recipients                  │
 │    - pause() → emergency stop                                   │
 ├─────────────────────────────────────────────────────────────────┤
-│  Protocol Functions:                                             │
-│    - executePayroll() → withdraw + bridge to recipients         │
+│  Protocol Functions (onlyProtocol):                              │
+│    - executePayroll() → withdraw from LP, bridge to recipients  │
+│    ↳ Protocol Wallet (PRIVATE_KEY) is authorized to call this   │
+│    ↳ Funds go ONLY to configured recipients, not to protocol    │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               │ interacts with
@@ -156,6 +201,17 @@ sequenceDiagram
 │                      UNISWAP V4 POOL                            │
 │  - Holds USDC liquidity                                         │
 │  - Earns LP fees for escrow                                     │
+│  - Escrow contract owns the LP position                         │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              │ on executePayroll()
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   PROTOCOL WALLET (PRIVATE_KEY)                  │
+│  - Signs transactions to call executePayroll()                  │
+│  - Does NOT hold employer funds                                 │
+│  - Only has permission to trigger payroll, not arbitrary withdraw│
+│  - Controlled by Quaestor AI Agent                              │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
