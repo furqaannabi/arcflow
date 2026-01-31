@@ -12,3 +12,12 @@ via_ir = false
 [lint]
 exclude_lints = ["screaming-snake-case-immutable", "screaming-snake-case-const"]
 lint_on_build = false
+
+# Network configurations
+[rpc_endpoints]
+sepolia = "${SEPOLIA_RPC_URL}"
+arc = "${ARC_RPC_URL}"
+
+[etherscan]
+sepolia = { key = "${ETHERSCAN_API_KEY}", url = "https://api-sepolia.etherscan.io/api" }
+arc = { key = "${ARC_API_KEY}", url = "https://explorer.arc.io/api" }
