@@ -63,16 +63,9 @@
   --sidebar-ring: oklch(0.704 0.04 256.788);
 }
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
 
 body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  background-color: var(--color-slate-950);
-  color: var(--color-slate-100);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -81,6 +74,11 @@ body {
 #root {
   min-height: 100vh;
 }
+
+button {
+  cursor: pointer;
+}
+
 
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
