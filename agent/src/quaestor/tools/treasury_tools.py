@@ -35,7 +35,7 @@ class TreasuryPositionTool(BaseTool):
             "principal": 50000.00,
             "yield_earned": 150.00,
             "total": 50150.00,
-            "chain_id": 8453,
+            "chain_id": 84532,
             "token": "USDC"
         }
 
@@ -73,7 +73,7 @@ class GetPayrollDetailsTool(BaseTool):
         # TODO: Call actual smart contract
         # Mock response for now:
         recipients = [
-            {"address": "0xEmployee1...", "amount": 1000.00, "dest_chain": 8453},   # Base
+            {"address": "0xEmployee1...", "amount": 1000.00, "dest_chain": 84532},   # Base-sepolia
             {"address": "0xEmployee2...", "amount": 1500.00, "dest_chain": 42161},  # Arbitrum
             {"address": "0xEmployee3...", "amount": 1200.00, "dest_chain": 1},      # Ethereum
         ]

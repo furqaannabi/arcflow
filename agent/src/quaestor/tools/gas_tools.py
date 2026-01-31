@@ -17,6 +17,7 @@ CHAIN_RPC = {
     137: f"https://polygon-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}",
     11155111: f"https://eth-sepolia.g.alchemy.com/v2/{ALCHEMY_API_KEY}",
     5042002: f"https://arc-testnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}",
+    84532: f"https://base-sepolia.g.alchemy.com/v2/{ALCHEMY_API_KEY}",
 }
 
 CHAIN_THRESHOLDS = {
@@ -32,7 +33,7 @@ CHAIN_THRESHOLDS = {
 
 class GasToolInput(BaseModel):
     """Input schema for GasTool."""
-    chain_id: int = Field(..., description="Blockchain chain ID (e.g., 1 for Ethereum, 8453 for Base)")
+    chain_id: int = Field(..., description="Blockchain chain ID (e.g., 1 for Base-sepolia, 84532 for Base)")
 
 
 class GasTools(BaseTool):
