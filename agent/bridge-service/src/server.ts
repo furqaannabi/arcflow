@@ -68,13 +68,18 @@ app.post("/bridge", async (req: Request<{}, BridgeResponse, BridgeRequest>, res:
     });
 
     console.log(`🔄 Bridging ${amount} USDC: ${fromChain} → ${toChain}`);
+    if (recipient) {
+      console.log(`   Recipient: ${recipient}`);
+    }
 
     // Execute the bridge transfer
+    // If recipient provided, use BridgeDestinationWithAddress to send to employee wallet
     const result = await kit.bridge({
       from: { adapter, chain: fromChain },
-      to: { adapter, chain: toChain },
+      to: recipient 
+        ? { adapter, chain: toChain, recipientAddress: recipient }
+        : { adapter, chain: toChain },
       amount,
-      // recipient can be added here if Circle supports it
     });
 
     console.log(`✅ Bridge complete:`, result);
