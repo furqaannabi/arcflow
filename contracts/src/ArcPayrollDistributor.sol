@@ -68,12 +68,10 @@ contract ArcPayrollDistributor is ReentrancyGuard {
     error NonceAlreadyUsed();
     error PayrollNotReady();
     error ArrayLengthMismatch();
+    error TransferFailed();
 
     // ============ State Variables ============
-    
-    /// @notice USDC token address on Arc Network
-    IERC20 public immutable usdc;
-    
+
     /// @notice Owner (corporate treasury admin)
     address public owner;
     
@@ -108,9 +106,8 @@ contract ArcPayrollDistributor is ReentrancyGuard {
 
     // ============ Constructor ============
     
-    constructor(address _usdc, address _owner) {
-        if (_usdc == address(0) || _owner == address(0)) revert ZeroAddress();
-        usdc = IERC20(_usdc);
+    constructor(address _owner) {
+        if (_owner == address(0)) revert ZeroAddress();
         owner = _owner;
     }
 
@@ -185,7 +182,7 @@ contract ArcPayrollDistributor is ReentrancyGuard {
         }
         
         // Check balance
-        if (usdc.balanceOf(address(this)) < totalAmount) {
+        if (address(this).balance < totalAmount) {
             revert InsufficientBalance();
         }
         
@@ -194,7 +191,8 @@ contract ArcPayrollDistributor is ReentrancyGuard {
             PayrollRecipient calldata recipient = recipients[i];
             if (recipient.wallet == address(0)) revert ZeroAddress();
             
-            usdc.safeTransfer(recipient.wallet, recipient.amount);
+            (bool success, ) = payable(recipient.wallet).call{value: recipient.amount}("");
+            if (!success) revert TransferFailed();
             emit PaymentSent(batchId, recipient.wallet, recipient.amount, recipient.employeeId);
         }
         
@@ -234,7 +232,7 @@ contract ArcPayrollDistributor is ReentrancyGuard {
         }
         
         // Check balance
-        if (usdc.balanceOf(address(this)) < totalAmount) {
+        if (address(this).balance < totalAmount) {
             revert InsufficientBalance();
         }
         
@@ -243,7 +241,8 @@ contract ArcPayrollDistributor is ReentrancyGuard {
             PayrollRecipient calldata recipient = recipients[i];
             if (recipient.wallet == address(0)) revert ZeroAddress();
             
-            usdc.safeTransfer(recipient.wallet, recipient.amount);
+            (bool success, ) = payable(recipient.wallet).call{value: recipient.amount}("");
+            if (!success) revert TransferFailed();
             emit PaymentSent(batchId, recipient.wallet, recipient.amount, recipient.employeeId);
         }
         
@@ -274,7 +273,7 @@ contract ArcPayrollDistributor is ReentrancyGuard {
             totalAmount += amounts[i];
         }
         
-        if (usdc.balanceOf(address(this)) < totalAmount) {
+        if (address(this).balance < totalAmount) {
             revert InsufficientBalance();
         }
         
@@ -282,7 +281,8 @@ contract ArcPayrollDistributor is ReentrancyGuard {
         
         for (uint256 i = 0; i < wallets.length; i++) {
             if (wallets[i] == address(0)) revert ZeroAddress();
-            usdc.safeTransfer(wallets[i], amounts[i]);
+            (bool success, ) = payable(wallets[i]).call{value: amounts[i]}("");
+            if (!success) revert TransferFailed();
             emit PaymentSent(batchId, wallets[i], amounts[i], "");
         }
         
@@ -334,10 +334,6 @@ contract ArcPayrollDistributor is ReentrancyGuard {
         return batches[batchId];
     }
     
-    /// @notice Check available USDC balance
-    function availableBalance() external view returns (uint256) {
-        return usdc.balanceOf(address(this));
-    }
     
     /// @notice Check if an agent is authorized
     function isAuthorizedAgent(address agent) external view returns (bool) {
