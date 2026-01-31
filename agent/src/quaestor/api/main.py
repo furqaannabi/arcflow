@@ -1,17 +1,30 @@
 """FastAPI application for ArcFlow Payroll."""
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional
+from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv
+from quaestor.api.scheduler import scheduler, start_scheduler, shutdown_scheduler
 
 load_dotenv()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifecycle manager for FastAPI app."""
+    start_scheduler()
+    yield
+    shutdown_scheduler()
+
 
 app = FastAPI(
     title="ArcFlow Payroll API",
     description="Autonomous treasury management and payroll execution",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 
@@ -98,6 +111,44 @@ async def trigger_payroll(request: TriggerRequest, background_tasks: BackgroundT
     )
 
 
+@app.post("/trigger-daily")
+async def trigger_daily_payrolls(background_tasks: BackgroundTasks):
+    """
+    Daily cron endpoint. Fetches all payrolls due today and triggers each.
+    Call this from a daily cron job (e.g., every day at 9 AM).
+    """
+    from quaestor.tools.treasury_tools import GetDuePayrollsTool
+    
+    # Fetch all payrolls due today
+    due_payrolls_result = GetDuePayrollsTool()._run()
+    due_payrolls = due_payrolls_result.get("payrolls", [])
+    
+    triggered = []
+    for payroll in due_payrolls:
+        inputs = {
+            "payroll_id": payroll["payroll_id"],
+            "contract_address": payroll["contract_address"],
+            "chain_id": payroll.get("chain_id", 84532),
+            "source_chain_id": payroll.get("chain_id", 84532),
+            "wallet_id": "your-circle-wallet-id",
+            "pool_address": payroll.get("pool_address", "0x..."),
+            "owner_address": payroll.get("owner_address", "0x..."),
+            "ceo_email": payroll.get("ceo_email", "default@arcflow.io"),
+            "override_link": f"https://arcflow.io/override/{payroll['payroll_id']}",
+            "hours_waited": 0,
+            "recipient_count": 0,
+        }
+        background_tasks.add_task(run_crew_async, inputs)
+        triggered.append(payroll["payroll_id"])
+    
+    return {
+        "status": "daily_trigger_complete",
+        "date": due_payrolls_result.get("date"),
+        "triggered_count": len(triggered),
+        "payroll_ids": triggered
+    }
+
+
 @app.post("/override")
 async def ceo_override(request: OverrideRequest, background_tasks: BackgroundTasks):
     """
@@ -145,4 +196,67 @@ async def get_status(payroll_id: str):
         "payroll_id": payroll_id,
         "status": "pending",
         "message": "Status tracking not yet implemented"
+    }
+
+
+class ScheduleRetryRequest(BaseModel):
+    """Request body for scheduling a retry."""
+    payroll_id: str
+    wait_minutes: int = 15
+    chain_id: int = 84532
+    contract_address: str = "0xPayrollContract..."
+
+
+@app.post("/schedule-retry")
+async def schedule_retry(request: ScheduleRetryRequest):
+    """
+    Schedule a delayed payroll retry using APScheduler.
+    Called by the agent when gas is high.
+    """
+    run_time = datetime.now() + timedelta(minutes=request.wait_minutes)
+    
+    inputs = {
+        "payroll_id": request.payroll_id,
+        "contract_address": request.contract_address,
+        "chain_id": request.chain_id,
+        "source_chain_id": request.chain_id,
+        "wallet_id": "your-circle-wallet-id",
+        "pool_address": "0x123...abc",
+        "owner_address": "0xABC...123",
+        "ceo_email": "williamikeji@gmail.com",
+        "override_link": f"https://arcflow.io/override/{request.payroll_id}",
+        "hours_waited": 0,
+        "recipient_count": 0,
+    }
+    
+    job = scheduler.add_job(
+        run_crew_async,
+        trigger="date",
+        run_date=run_time,
+        args=[inputs],
+        id=f"retry_{request.payroll_id}_{int(run_time.timestamp())}"
+    )
+    
+    return {
+        "status": "scheduled",
+        "payroll_id": request.payroll_id,
+        "retry_at": run_time.isoformat(),
+        "job_id": job.id,
+        "wait_minutes": request.wait_minutes
+    }
+
+
+@app.get("/scheduled-jobs")
+async def list_scheduled_jobs():
+    """List all scheduled retry jobs."""
+    jobs = scheduler.get_jobs()
+    return {
+        "count": len(jobs),
+        "jobs": [
+            {
+                "id": job.id,
+                "next_run": job.next_run_time.isoformat() if job.next_run_time else None
+            }
+            for job in jobs
+        ]
     }

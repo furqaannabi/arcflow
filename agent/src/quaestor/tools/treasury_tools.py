@@ -58,6 +58,48 @@ class DistributionCalculatorTool(BaseTool):
             "recipient_count": recipient_count
         }
 
+
+class GetDuePayrollsTool(BaseTool):
+    name: str = "Get Due Payrolls"
+    description: str = "Fetches all payrolls that are due for execution today from the smart contract or database."
+
+    def _run(self) -> dict:
+        # TODO: Query actual smart contract or database for due payrolls
+        # Contract call: getPayrollsByDate(today) or similar
+        
+        from datetime import date
+        today = date.today().isoformat()
+        
+        # Mock response - in production, query contract
+        due_payrolls = [
+            {
+                "payroll_id": "PAY-2026-001",
+                "contract_address": "0xPayrollContract1...",
+                "employer": "0xCompanyA...",
+                "chain_id": 84532,
+                "pool_address": "0xPool1...",
+                "owner_address": "0xOwner1...",
+                "ceo_email": "ceo@companya.com",
+                "execution_date": today
+            },
+            {
+                "payroll_id": "PAY-2026-002",
+                "contract_address": "0xPayrollContract2...",
+                "employer": "0xCompanyB...",
+                "chain_id": 84532,
+                "pool_address": "0xPool2...",
+                "owner_address": "0xOwner2...",
+                "ceo_email": "ceo@companyb.com",
+                "execution_date": today
+            },
+        ]
+        
+        return {
+            "date": today,
+            "count": len(due_payrolls),
+            "payrolls": due_payrolls
+        }
+
 class GetPayrollDetailsInput(BaseModel):
     """Input for fetching payroll details from contract."""
     payroll_id: str = Field(..., description="Payroll/payment ID from the smart contract")
@@ -155,22 +197,50 @@ class ScheduleRetryInput(BaseModel):
 
 class ScheduleRetryTool(BaseTool):
     name: str = "Schedule Delayed Retry"
-    description: str = "Schedules a delayed retry with Gelato when gas is too high. Use this when gas prices are elevated and payroll should wait."
+    description: str = "Schedules a delayed retry when gas is too high. Use this when gas prices are elevated and payroll should wait."
     args_schema: Type[BaseModel] = ScheduleRetryInput
 
     def _run(self, payroll_id: str, wait_minutes: int, chain_id: int) -> dict:
-        # TODO: Use Gelato Web3 Functions API to schedule delayed task
-        # API: https://api.gelato.network/tasks/create
-        # Set executionTime = now + wait_minutes
+        import requests
         
-        import time
-        retry_timestamp = int(time.time()) + (wait_minutes * 60)
+        # Call the FastAPI schedule-retry endpoint
+        api_url = os.getenv("API_BASE_URL", "http://localhost:8000")
         
-        return {
-            "status": "scheduled",
-            "payroll_id": payroll_id,
-            "wait_minutes": wait_minutes,
-            "retry_at_timestamp": retry_timestamp,
-            "chain_id": chain_id,
-            "gelato_task_id": "mock-gelato-task-123"
-        }
+        try:
+            response = requests.post(
+                f"{api_url}/schedule-retry",
+                json={
+                    "payroll_id": payroll_id,
+                    "wait_minutes": wait_minutes,
+                    "chain_id": chain_id
+                },
+                timeout=10
+            )
+            
+            if response.ok:
+                data = response.json()
+                return {
+                    "status": "scheduled",
+                    "payroll_id": payroll_id,
+                    "wait_minutes": wait_minutes,
+                    "retry_at": data.get("retry_at"),
+                    "job_id": data.get("job_id"),
+                    "chain_id": chain_id
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": f"API returned {response.status_code}"
+                }
+        except Exception as e:
+            # Fallback to mock if API not running
+            import time
+            retry_timestamp = int(time.time()) + (wait_minutes * 60)
+            return {
+                "status": "scheduled_mock",
+                "payroll_id": payroll_id,
+                "wait_minutes": wait_minutes,
+                "retry_at_timestamp": retry_timestamp,
+                "chain_id": chain_id,
+                "note": f"API unavailable, mock scheduled: {e}"
+            }
