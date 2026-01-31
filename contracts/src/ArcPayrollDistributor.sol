@@ -6,11 +6,11 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 /// @title ArcFlow Payroll Distributor
 /// @notice Distributes payroll on Arc Network with gasless transactions for employees
 /// @dev Deployed on Arc Network to receive USDC via Circle Gateway and distribute to employees
-contract ArcPayrollDistributor is ReentrancyGuard {
+contract ArcPayrollDistributor is ReentrancyGuard, Ownable {
     using SafeERC20 for IERC20;
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
@@ -72,9 +72,6 @@ contract ArcPayrollDistributor is ReentrancyGuard {
 
     // ============ State Variables ============
 
-    /// @notice Owner (corporate treasury admin)
-    address public owner;
-    
     /// @notice Authorized AI agents
     mapping(address => bool) public authorizedAgents;
     
@@ -92,24 +89,15 @@ contract ArcPayrollDistributor is ReentrancyGuard {
 
     // ============ Modifiers ============
     
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert OnlyOwner();
-        _;
-    }
-    
     modifier onlyAuthorizedAgent() {
-        if (!authorizedAgents[msg.sender] && msg.sender != owner) {
+        if (!authorizedAgents[msg.sender] && msg.sender != owner()) {
             revert UnauthorizedAgent();
         }
         _;
     }
 
     // ============ Constructor ============
-    
-    constructor(address _owner) {
-        if (_owner == address(0)) revert ZeroAddress();
-        owner = _owner;
-    }
+    constructor() Ownable(msg.sender) {}
 
     // ============ Admin Functions ============
     
@@ -120,11 +108,6 @@ contract ArcPayrollDistributor is ReentrancyGuard {
         emit AgentAuthorized(agent, authorized);
     }
     
-    /// @notice Transfer ownership
-    function transferOwnership(address newOwner) external onlyOwner {
-        if (newOwner == address(0)) revert ZeroAddress();
-        owner = newOwner;
-    }
     
     /// @notice Emergency withdrawal (only owner)
     function emergencyWithdraw(address token, address to, uint256 amount) external onlyOwner {

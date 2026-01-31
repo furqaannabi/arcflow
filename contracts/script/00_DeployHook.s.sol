@@ -15,12 +15,11 @@ contract DeployHookScript is Script {
     address constant SEPOLIA_POOL_MANAGER = 0x8C4BcBE6b9eF47855f97E675296FA3F6fafa5F1A;
     
     function run() public {
-        // Get deployer private key from environment
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
-        
-        // Configuration - set these before deployment
-        address owner = deployer; // Owner of the hook
+
+        console.log("Deployer:", deployer);
+
         address circleGateway = vm.envOr("CIRCLE_GATEWAY", address(0)); // Circle Gateway address
         
         IPoolManager poolManager = IPoolManager(SEPOLIA_POOL_MANAGER);
@@ -32,18 +31,17 @@ contract DeployHookScript is Script {
         );
 
         // Mine a salt that will produce a hook address with the correct flags
-        bytes memory constructorArgs = abi.encode(poolManager, owner, circleGateway);
+        bytes memory constructorArgs = abi.encode(poolManager, circleGateway);
         (address hookAddress, bytes32 salt) =
             HookMiner.find(CREATE2_FACTORY, flags, type(ArcFlowHook).creationCode, constructorArgs);
 
         console.log("Deploying ArcFlowHook...");
         console.log("Expected hook address:", hookAddress);
-        console.log("Owner:", owner);
         console.log("Circle Gateway:", circleGateway);
 
         // Deploy the hook using CREATE2
         vm.startBroadcast(deployerPrivateKey);
-        ArcFlowHook hook = new ArcFlowHook{salt: salt}(poolManager, owner, circleGateway);
+        ArcFlowHook hook = new ArcFlowHook{salt: salt}(poolManager, circleGateway);
         vm.stopBroadcast();
 
         require(address(hook) == hookAddress, "DeployHookScript: Hook Address Mismatch");

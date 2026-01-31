@@ -11,11 +11,11 @@ import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/src/types/BeforeS
 import {SwapParams, ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
-
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 /// @title ArcFlow Payroll Guard Hook
 /// @notice Uniswap v4 hook that restricts fund exits to authorized AI agents only
 /// @dev Implements the "Payroll Guard" concept - funds can only be withdrawn with agent signature
-contract ArcFlowHook is BaseHook {
+contract ArcFlowHook is BaseHook, Ownable {
     using PoolIdLibrary for PoolKey;
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
@@ -43,8 +43,6 @@ contract ArcFlowHook is BaseHook {
 
     // ============ State Variables ============
     
-    /// @notice Owner of the hook (corporate treasury admin)
-    address public owner;
     
     /// @notice Authorized AI agents that can sign withdrawal intents
     mapping(address => bool) public authorizedAgents;
@@ -66,20 +64,12 @@ contract ArcFlowHook is BaseHook {
 
     // ============ Modifiers ============
     
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert OnlyOwner();
-        _;
-    }
-
     // ============ Constructor ============
     
     constructor(
         IPoolManager _poolManager,
-        address _owner,
         address _circleGateway
-    ) BaseHook(_poolManager) {
-        if (_owner == address(0)) revert ZeroAddress();
-        owner = _owner;
+    ) BaseHook(_poolManager) Ownable(msg.sender) {
         circleGateway = _circleGateway;
     }
 
@@ -102,12 +92,6 @@ contract ArcFlowHook is BaseHook {
         emit CircleGatewayUpdated(oldGateway, _circleGateway);
     }
     
-    /// @notice Transfer ownership
-    /// @param newOwner New owner address
-    function transferOwnership(address newOwner) external onlyOwner {
-        if (newOwner == address(0)) revert ZeroAddress();
-        owner = newOwner;
-    }
 
     // ============ Hook Permissions ============
     
@@ -197,7 +181,7 @@ contract ArcFlowHook is BaseHook {
     ) internal override returns (bytes4, BeforeSwapDelta, uint24) {
         // If hookData is empty, check if sender is authorized agent or owner
         if (hookData.length == 0) {
-            if (!authorizedAgents[sender] && sender != owner) {
+            if (!authorizedAgents[sender] && sender != owner()) {
                 revert UnauthorizedAgent();
             }
         } else {

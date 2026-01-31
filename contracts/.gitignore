@@ -17,3 +17,6 @@ docs/
 # Node modules
 node_modules/
 lib/
+
+# Broadcast files
+broadcast/
