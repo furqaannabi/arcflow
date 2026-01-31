@@ -79,7 +79,7 @@ class GetDuePayrollsTool(BaseTool):
                 "chain_id": 11155111,
                 "pool_address": "0xPool1...",
                 "owner_address": "0xOwner1...",
-                "ceo_email": "ceo@companya.com",
+                "ceo_email": "williamikeji@gmail.com",
                 "execution_date": today
             },
             {
@@ -89,7 +89,7 @@ class GetDuePayrollsTool(BaseTool):
                 "chain_id": 11155111,
                 "pool_address": "0xPool2...",
                 "owner_address": "0xOwner2...",
-                "ceo_email": "ceo@companyb.com",
+                "ceo_email": "williamikeji@gmail.com",
                 "execution_date": today
             },
         ]

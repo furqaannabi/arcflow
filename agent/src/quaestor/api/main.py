@@ -117,6 +117,7 @@ async def trigger_daily_payrolls(background_tasks: BackgroundTasks):
     Daily cron endpoint. Fetches all payrolls due today and triggers each.
     Call this from a daily cron job (e.g., every day at 9 AM).
     """
+    import asyncio
     from quaestor.tools.treasury_tools import GetDuePayrollsTool
     
     # Fetch all payrolls due today
@@ -133,13 +134,17 @@ async def trigger_daily_payrolls(background_tasks: BackgroundTasks):
             "wallet_id": "your-circle-wallet-id",
             "pool_address": payroll.get("pool_address", "0x..."),
             "owner_address": payroll.get("owner_address", "0x..."),
-            "ceo_email": payroll.get("ceo_email", "default@arcflow.io"),
-            "override_link": f"{os.getenv("APP_BASE_URL", "https://arcflow.io")}/override/{payroll['payroll_id']}",
+            "ceo_email": payroll.get("ceo_email", "williamikeji@gmail.com"),
+            "override_link": f"{os.getenv('APP_BASE_URL', 'https://arcflow.io')}/override/{payroll['payroll_id']}",
             "hours_waited": 0,
             "recipient_count": 0,
         }
         background_tasks.add_task(run_crew_async, inputs)
         triggered.append(payroll["payroll_id"])
+        
+        # Delay between triggers to avoid OpenAI rate limits
+        if len(due_payrolls) > 1:
+            await asyncio.sleep(5)
     
     return {
         "status": "daily_trigger_complete",
