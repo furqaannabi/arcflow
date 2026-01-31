@@ -28,12 +28,13 @@ CHAIN_THRESHOLDS = {
     137: {"optimal": 100, "max": 300},
     11155111: {"optimal": 5, "max": 10},
     5042002: {"optimal": 0.1, "max": 0.5},
+    84532: {"optimal": 0.1, "max": 0.5},
 }
 
 
 class GasToolInput(BaseModel):
     """Input schema for GasTool."""
-    chain_id: int = Field(..., description="Blockchain chain ID (e.g., 1 for Base-sepolia, 84532 for Base)")
+    chain_id: int = Field(..., description="Blockchain chain ID (e.g., 1 for Base-sepolia, 11155111 for Base)")
 
 
 class GasTools(BaseTool):

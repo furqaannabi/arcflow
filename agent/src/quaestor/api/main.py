@@ -32,8 +32,8 @@ class TriggerRequest(BaseModel):
     """Request body for triggering payroll."""
     payroll_id: str
     contract_address: str
-    chain_id: int = 84532
-    source_chain_id: int = 84532
+    chain_id: int = 11155111
+    source_chain_id: int = 11155111
     wallet_id: str = "your-circle-wallet-id"
     pool_address: str = "0x123...abc"
     owner_address: str = "0xABC...123"
@@ -128,8 +128,8 @@ async def trigger_daily_payrolls(background_tasks: BackgroundTasks):
         inputs = {
             "payroll_id": payroll["payroll_id"],
             "contract_address": payroll["contract_address"],
-            "chain_id": payroll.get("chain_id", 84532),
-            "source_chain_id": payroll.get("chain_id", 84532),
+            "chain_id": payroll.get("chain_id", 11155111),
+            "source_chain_id": payroll.get("chain_id", 11155111),
             "wallet_id": "your-circle-wallet-id",
             "pool_address": payroll.get("pool_address", "0x..."),
             "owner_address": payroll.get("owner_address", "0x..."),
@@ -203,7 +203,7 @@ class ScheduleRetryRequest(BaseModel):
     """Request body for scheduling a retry."""
     payroll_id: str
     wait_minutes: int = 15
-    chain_id: int = 84532
+    chain_id: int = 11155111
     contract_address: str = "0xPayrollContract..."
 
 
