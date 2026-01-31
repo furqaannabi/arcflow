@@ -2,7 +2,7 @@ from crewai import Agent, Crew, Process, Task, LLM
 from crewai.project import CrewBase, agent, crew, task
 from quaestor.tools.gas_tools import GasTools
 import os
-from quaestor.tools.treasury_tools import TreasuryPositionTool, DistributionCalculatorTool, GetPayrollDetailsTool, CheckFundsSufficiencyTool,PayrollExecutionTool  
+from quaestor.tools.treasury_tools import TreasuryPositionTool, DistributionCalculatorTool, GetPayrollDetailsTool, CheckFundsSufficiencyTool,PayrollExecutionTool, ScheduleRetryTool  
 from quaestor.tools.email_tools import WaitingNotificationTool, CompletionNotificationTool, InsufficientFundsNotificationTool
 
 @CrewBase
@@ -16,7 +16,7 @@ class QuaestorCrew:
 	def market_optimizer(self) -> Agent:
 		return Agent(
 			config=self.agents_config['market_optimizer'],
-			tools=[GasTools()],
+			tools=[GasTools(), ScheduleRetryTool()],
 			verbose=True
 		)
 

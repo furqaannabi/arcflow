@@ -142,3 +142,35 @@ class PayrollExecutionTool(BaseTool):
             "cross_chain_count": len(cross_chain),
             "source_chain": source_chain_id
         }
+
+
+
+
+class ScheduleRetryInput(BaseModel):
+    """Input for scheduling a delayed retry."""
+    payroll_id: str = Field(..., description="Payroll ID to retry")
+    wait_minutes: int = Field(..., description="Minutes to wait before retrying")
+    chain_id: int = Field(..., description="Chain ID")
+
+
+class ScheduleRetryTool(BaseTool):
+    name: str = "Schedule Delayed Retry"
+    description: str = "Schedules a delayed retry with Gelato when gas is too high. Use this when gas prices are elevated and payroll should wait."
+    args_schema: Type[BaseModel] = ScheduleRetryInput
+
+    def _run(self, payroll_id: str, wait_minutes: int, chain_id: int) -> dict:
+        # TODO: Use Gelato Web3 Functions API to schedule delayed task
+        # API: https://api.gelato.network/tasks/create
+        # Set executionTime = now + wait_minutes
+        
+        import time
+        retry_timestamp = int(time.time()) + (wait_minutes * 60)
+        
+        return {
+            "status": "scheduled",
+            "payroll_id": payroll_id,
+            "wait_minutes": wait_minutes,
+            "retry_at_timestamp": retry_timestamp,
+            "chain_id": chain_id,
+            "gelato_task_id": "mock-gelato-task-123"
+        }

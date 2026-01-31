@@ -1,10 +1,22 @@
 analyze_gas:
   description: >
-    Check the current gas price on chain {chain_id}.
-    Use the gas_tools to get the price and determine if it's optimal, high, or critical.
-    Return a decision: EXECUTE, WAIT, or WAIT_URGENT.
+    Check current gas prices on chain {chain_id} using the "Gas Price Checker" tool.
+    Determine if conditions are optimal for executing payroll.
+    
+    Decision logic:
+    - If decision is "EXECUTE": Proceed with payroll (return gas details)
+    - If decision is "WAIT": 
+      1. Use "Schedule Delayed Retry" tool with payroll_id: {payroll_id}, wait_minutes: 15, chain_id: {chain_id}
+      2. Report that payroll is scheduled for retry
+    - If decision is "WAIT_URGENT": 
+      1. Use "Schedule Delayed Retry" tool with wait_minutes: 30
+      2. Flag that CEO notification is required
   expected_output: >
-    A JSON object with: decision (EXECUTE/WAIT/WAIT_URGENT), gas_price (in gwei), chain_id
+    A JSON object with:
+    - decision: EXECUTE, WAIT, or WAIT_URGENT
+    - gas_price: current gas in gwei
+    - chain_id
+    - scheduled_retry: (if waiting) gelato_task_id and retry_at_timestamp
   agent: market_optimizer
 
 calculate_distribution:
