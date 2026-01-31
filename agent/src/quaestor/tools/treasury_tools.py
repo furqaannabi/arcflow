@@ -164,25 +164,54 @@ class PayrollExecutionTool(BaseTool):
     args_schema: Type[BaseModel] = PayrollExecutionInput
 
     def _run(self, payroll_id: str, recipients: list, source_chain_id: int, wallet_id: str) -> dict:
-        # TODO: Integrate Circle Gateway (CCTP)
-        # For each recipient:
-        #   if recipient["dest_chain"] != source_chain_id:
-        #       Use Gateway to bridge USDC
-        #   else:
-        #       Direct transfer on same chain
+        from quaestor.services.circle_gateway import gateway_service
         
-        # Mock for now:
-        total_paid = sum(r["amount"] for r in recipients)
-        cross_chain = [r for r in recipients if r.get("dest_chain") != source_chain_id]
+        results = []
+        total_paid = 0.0
+        cross_chain_count = 0
+        failed = []
+        
+        for recipient in recipients:
+            address = recipient.get("address")
+            amount = recipient.get("amount", 0)
+            dest_chain = recipient.get("dest_chain", source_chain_id)
+            
+            # Execute transfer via Circle Gateway
+            transfer_result = gateway_service.transfer_cross_chain(
+                amount=amount,
+                recipient_address=address,
+                dest_chain_id=dest_chain,
+                source_chain_id=source_chain_id
+            )
+            
+            if transfer_result.success:
+                total_paid += amount
+                results.append({
+                    "recipient": address,
+                    "amount": amount,
+                    "tx_hash": transfer_result.tx_hash,
+                    "dest_chain": dest_chain
+                })
+                if dest_chain != source_chain_id:
+                    cross_chain_count += 1
+            else:
+                failed.append({
+                    "recipient": address,
+                    "amount": amount,
+                    "error": transfer_result.error
+                })
+        
+        status = "success" if not failed else "partial_success" if results else "failed"
         
         return {
-            "status": "success",
+            "status": status,
             "payroll_id": payroll_id,
-            "tx_hashes": ["0xmock1...", "0xmock2..."],
+            "tx_hashes": [r["tx_hash"] for r in results],
             "total_paid": total_paid,
-            "recipient_count": len(recipients),
-            "cross_chain_count": len(cross_chain),
-            "source_chain": source_chain_id
+            "recipient_count": len(results),
+            "cross_chain_count": cross_chain_count,
+            "source_chain": source_chain_id,
+            "failed": failed if failed else None
         }
 
 
