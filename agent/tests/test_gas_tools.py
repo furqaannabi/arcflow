@@ -11,7 +11,7 @@ def test_gas_tools():
     
     for chain_id in chains_to_test:
         try:
-            result = gas.should_execute(chain_id)
+            result = gas._run(chain_id=chain_id)  # Changed to _run
             print(f"Chain {chain_id}: {result['decision']} (Gas: {result['gas']:.4f} gwei)")
         except Exception as e:
             print(f"Chain {chain_id}: ERROR - {e}")
