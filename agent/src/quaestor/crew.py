@@ -1,9 +1,9 @@
 from crewai import Agent, Crew, Process, Task, LLM
 from crewai.project import CrewBase, agent, crew, task
 from quaestor.tools.gas_tools import GasTools
-from quaestor.tools.treasury_tools import TreasuryTools
-from quaestor.tools.email_tools import EmailTools
 import os
+from quaestor.tools.treasury_tools import TreasuryPositionTool, DistributionCalculatorTool, GetPayrollDetailsTool, CheckFundsSufficiencyTool,PayrollExecutionTool, ScheduleRetryTool  
+from quaestor.tools.email_tools import WaitingNotificationTool, CompletionNotificationTool, InsufficientFundsNotificationTool
 
 @CrewBase
 class QuaestorCrew:
@@ -11,18 +11,12 @@ class QuaestorCrew:
 	agents_config = 'config/agents.yaml'
 	tasks_config = 'config/tasks.yaml'
 
-	# Initialize LLM
-	llm = LLM(
-		model="gpt-4o",
-		api_key=os.getenv("OPENAI_API_KEY")
-	)
 
 	@agent
 	def market_optimizer(self) -> Agent:
 		return Agent(
 			config=self.agents_config['market_optimizer'],
-			tools=[GasTools()],
-			llm=self.llm,
+			tools=[GasTools(), ScheduleRetryTool()],
 			verbose=True
 		)
 
@@ -30,8 +24,7 @@ class QuaestorCrew:
 	def treasury_analyst(self) -> Agent:
 		return Agent(
 			config=self.agents_config['treasury_analyst'],
-			tools=[TreasuryTools()],
-			llm=self.llm,
+			tools=[TreasuryPositionTool(), DistributionCalculatorTool(), GetPayrollDetailsTool(), CheckFundsSufficiencyTool(), PayrollExecutionTool()],
 			verbose=True
 		)
 
@@ -39,8 +32,7 @@ class QuaestorCrew:
 	def compliance_officer(self) -> Agent:
 		return Agent(
 			config=self.agents_config['compliance_officer'],
-			tools=[EmailTools()],
-			llm=self.llm,
+			tools=[WaitingNotificationTool(), CompletionNotificationTool(), InsufficientFundsNotificationTool()],
 			verbose=True
 		)
 
@@ -49,6 +41,13 @@ class QuaestorCrew:
 		return Task(
 			config=self.tasks_config['analyze_gas'],
 			agent=self.market_optimizer()
+		)
+
+	@task
+	def get_payroll_details(self) -> Task:
+		return Task(
+			config=self.tasks_config['get_payroll_details'],
+			agent=self.treasury_analyst()
 		)
 
 	@task
@@ -86,12 +85,20 @@ class QuaestorCrew:
 			agent=self.compliance_officer()
 		)
 
+
 	@crew
 	def crew(self) -> Crew:
 		"""Creates the Quaestor crew"""
+
+		manager = Agent(
+			config=self.agents_config['manager'],
+			allow_delegation=True
+		)
+
 		return Crew(
 			agents=self.agents, # Automatically collected by @agent decorator
 			tasks=self.tasks,   # Automatically collected by @task decorator
-			process=Process.sequential,
+			process=Process.hierarchical,
+			manager_agent=manager,
 			verbose=True,
 		)
