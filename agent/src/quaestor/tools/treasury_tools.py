@@ -73,9 +73,9 @@ class GetPayrollDetailsTool(BaseTool):
         # TODO: Call actual smart contract
         # Mock response for now:
         recipients = [
-            {"address": "0xEmployee1...", "amount": 1000.00},
-            {"address": "0xEmployee2...", "amount": 1500.00},
-            {"address": "0xEmployee3...", "amount": 1200.00},
+            {"address": "0xEmployee1...", "amount": 1000.00, "dest_chain": 8453},   # Base
+            {"address": "0xEmployee2...", "amount": 1500.00, "dest_chain": 42161},  # Arbitrum
+            {"address": "0xEmployee3...", "amount": 1200.00, "dest_chain": 1},      # Ethereum
         ]
         total_required = sum(r["amount"] for r in recipients)
         return {
@@ -84,6 +84,7 @@ class GetPayrollDetailsTool(BaseTool):
             "total_required": total_required,
             "recipient_count": len(recipients)
         }
+
 
 
 class CheckFundsSufficiencyInput(BaseModel):
@@ -105,4 +106,39 @@ class CheckFundsSufficiencyTool(BaseTool):
             "available": available_funds,
             "required": required_amount,
             "shortfall": shortfall
+        }
+
+class PayrollExecutionInput(BaseModel):
+    """Input for executing payroll."""
+    payroll_id: str = Field(..., description="Payroll ID to execute")
+    recipients: list = Field(..., description="List of {address, amount, dest_chain} to pay")
+    source_chain_id: int = Field(..., description="Chain where treasury funds are")
+    wallet_id: str = Field(..., description="Circle wallet ID to pay from")
+
+
+class PayrollExecutionTool(BaseTool):
+    name: str = "Execute Payroll"
+    description: str = "Executes payroll payments using Circle Gateway for cross-chain USDC transfers."
+    args_schema: Type[BaseModel] = PayrollExecutionInput
+
+    def _run(self, payroll_id: str, recipients: list, source_chain_id: int, wallet_id: str) -> dict:
+        # TODO: Integrate Circle Gateway (CCTP)
+        # For each recipient:
+        #   if recipient["dest_chain"] != source_chain_id:
+        #       Use Gateway to bridge USDC
+        #   else:
+        #       Direct transfer on same chain
+        
+        # Mock for now:
+        total_paid = sum(r["amount"] for r in recipients)
+        cross_chain = [r for r in recipients if r.get("dest_chain") != source_chain_id]
+        
+        return {
+            "status": "success",
+            "payroll_id": payroll_id,
+            "tx_hashes": ["0xmock1...", "0xmock2..."],
+            "total_paid": total_paid,
+            "recipient_count": len(recipients),
+            "cross_chain_count": len(cross_chain),
+            "source_chain": source_chain_id
         }

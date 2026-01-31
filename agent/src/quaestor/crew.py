@@ -2,7 +2,7 @@ from crewai import Agent, Crew, Process, Task, LLM
 from crewai.project import CrewBase, agent, crew, task
 from quaestor.tools.gas_tools import GasTools
 import os
-from quaestor.tools.treasury_tools import TreasuryPositionTool, DistributionCalculatorTool, GetPayrollDetailsTool, CheckFundsSufficiencyTool
+from quaestor.tools.treasury_tools import TreasuryPositionTool, DistributionCalculatorTool, GetPayrollDetailsTool, CheckFundsSufficiencyTool,PayrollExecutionTool  
 from quaestor.tools.email_tools import WaitingNotificationTool, CompletionNotificationTool, InsufficientFundsNotificationTool
 
 @CrewBase
@@ -24,7 +24,7 @@ class QuaestorCrew:
 	def treasury_analyst(self) -> Agent:
 		return Agent(
 			config=self.agents_config['treasury_analyst'],
-			tools=[TreasuryPositionTool(), DistributionCalculatorTool(), GetPayrollDetailsTool(), CheckFundsSufficiencyTool()],
+			tools=[TreasuryPositionTool(), DistributionCalculatorTool(), GetPayrollDetailsTool(), CheckFundsSufficiencyTool(), PayrollExecutionTool()],
 			verbose=True
 		)
 
@@ -41,6 +41,13 @@ class QuaestorCrew:
 		return Task(
 			config=self.tasks_config['analyze_gas'],
 			agent=self.market_optimizer()
+		)
+
+	@task
+	def get_payroll_details(self) -> Task:
+		return Task(
+			config=self.tasks_config['get_payroll_details'],
+			agent=self.treasury_analyst()
 		)
 
 	@task
@@ -77,6 +84,7 @@ class QuaestorCrew:
 			config=self.tasks_config['notify_ceo_complete'],
 			agent=self.compliance_officer()
 		)
+
 
 	@crew
 	def crew(self) -> Crew:

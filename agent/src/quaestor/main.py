@@ -12,6 +12,7 @@ def run():
     Run the crew.
     """
     inputs = {
+        "wallet_id": "your-circle-wallet-id",
         "payroll_id": "PAY-2026-001",  
         "pool_address": "0x123...abc",
         "owner_address": "0xABC...123",
@@ -20,7 +21,8 @@ def run():
         "chain_id": 8453,
         "ceo_email": "williamikeji@gmail.com",
         "override_link": "https://arcflow.io/override/token123",
-        "hours_waited": 2
+        "hours_waited": 2,
+        "source_chain_id": 8453,  # Treasury on Base
     }
     QuaestorCrew().crew().kickoff(inputs=inputs)
 

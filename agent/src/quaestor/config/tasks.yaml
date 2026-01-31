@@ -18,18 +18,6 @@ calculate_distribution:
   context:
     - analyze_gas
 
-execute_payroll:
-  description: >
-    Execute the payroll distribution to all recipients.
-    Withdraw funds from the Uniswap pool at {pool_address}.
-    Pay each recipient their calculated amount.
-    Pay the protocol fee to ArcFlow treasury.
-  expected_output: >
-    A JSON object with: status, tx_hash, paid_recipients, amount_per_recipient, protocol_fee_paid
-  agent: treasury_analyst
-  context:
-    - calculate_distribution
-
 notify_ceo_waiting:
   description: >
     Gas prices are elevated. Send a notification to {ceo_email} explaining:
@@ -93,3 +81,27 @@ get_payroll_details:
     - is_sufficient: boolean indicating if funds cover payroll
     - shortfall: amount needed if insufficient (0 if sufficient)
   agent: treasury_analyst
+
+execute_payroll:
+  execute_payroll:
+  description: >
+    Execute payroll using Circle Gateway for cross-chain USDC transfers.
+    Use the "Execute Payroll" tool with:
+    - payroll_id: {payroll_id}
+    - recipients: (list from get_payroll_details - includes address, amount, dest_chain)
+    - source_chain_id: {source_chain_id}
+    - wallet_id: {wallet_id}
+    
+    For recipients where dest_chain differs from source_chain_id, use Circle Gateway (CCTP) to bridge.
+    For same-chain recipients, do direct transfer.
+  expected_output: >
+    A JSON object with:
+    - status: success or failure
+    - payroll_id
+    - tx_hashes: list of transaction hashes
+    - total_paid: sum of all payments
+    - recipient_count: number of recipients paid
+  agent: treasury_analyst
+  context:
+    - get_payroll_details
+    - analyze_gas
