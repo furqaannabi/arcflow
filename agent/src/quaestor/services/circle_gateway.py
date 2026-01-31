@@ -200,33 +200,6 @@ class CircleGatewayService:
         except Exception as e:
             return TransferResult(success=False, error=str(e))
     
-    def _create_burn_intent(
-        self,
-        amount: float,
-        recipient: str,
-        source_chain: int,
-        dest_chain: int
-    ) -> dict:
-        """Create a burn intent for cross-chain transfer."""
-        # TODO: Implement actual burn intent creation
-        # This requires signing a typed data message
-        return {
-            "success": True,
-            "intent_id": f"intent_{source_chain}_{dest_chain}_{int(amount * 1e6)}",
-            "amount": amount,
-            "recipient": recipient
-        }
-    
-    def _submit_transfer(self, burn_intent: dict) -> dict:
-        """Submit burn intent to Gateway API."""
-        # TODO: Implement actual API call
-        # POST to Gateway API with signed burn intent
-        return {
-            "success": True,
-            "tx_hash": f"0x{'a' * 64}",
-            "status": "completed"
-        }
-    
     # ==================== MOCK METHODS ====================
     
     def _mock_wallet_balance(self, wallet_id: str) -> dict:
