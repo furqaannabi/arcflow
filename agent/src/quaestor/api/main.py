@@ -97,7 +97,7 @@ async def trigger_payroll(request: TriggerRequest, background_tasks: BackgroundT
         "pool_address": request.pool_address,
         "owner_address": request.owner_address,
         "ceo_email": request.ceo_email,
-        "override_link": f"https://arcflow.io/override/{request.payroll_id}",
+        "override_link": f"{os.getenv("APP_BASE_URL", "https://arcflow.io")}/override/{request.payroll_id}",
         "hours_waited": 0,
         "recipient_count": 0,  # Will be fetched by agent
     }
@@ -134,7 +134,7 @@ async def trigger_daily_payrolls(background_tasks: BackgroundTasks):
             "pool_address": payroll.get("pool_address", "0x..."),
             "owner_address": payroll.get("owner_address", "0x..."),
             "ceo_email": payroll.get("ceo_email", "default@arcflow.io"),
-            "override_link": f"https://arcflow.io/override/{payroll['payroll_id']}",
+            "override_link": f"{os.getenv("APP_BASE_URL", "https://arcflow.io")}/override/{payroll['payroll_id']}",
             "hours_waited": 0,
             "recipient_count": 0,
         }
@@ -224,7 +224,7 @@ async def schedule_retry(request: ScheduleRetryRequest):
         "pool_address": "0x123...abc",
         "owner_address": "0xABC...123",
         "ceo_email": "williamikeji@gmail.com",
-        "override_link": f"https://arcflow.io/override/{request.payroll_id}",
+        "override_link": f"{os.getenv("APP_BASE_URL", "https://arcflow.io")}/override/{request.payroll_id}",
         "hours_waited": 0,
         "recipient_count": 0,
     }

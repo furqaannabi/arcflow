@@ -20,7 +20,7 @@ def run():
         "recipient_count": 50,
         "chain_id": 11155111,
         "ceo_email": "williamikeji@gmail.com",
-        "override_link": "https://arcflow.io/override/token123",
+        "override_link": "{os.getenv("APP_BASE_URL", "https://arcflow.io")}/override/token123",
         "hours_waited": 2,
         "source_chain_id": 11155111,  # Treasury on Base
     }
