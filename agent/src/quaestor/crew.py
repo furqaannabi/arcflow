@@ -1,9 +1,9 @@
 from crewai import Agent, Crew, Process, Task, LLM
 from crewai.project import CrewBase, agent, crew, task
 from quaestor.tools.gas_tools import GasTools
-from quaestor.tools.treasury_tools import TreasuryTools
-from quaestor.tools.email_tools import EmailTools
 import os
+from quaestor.tools.treasury_tools import TreasuryPositionTool, DistributionCalculatorTool
+from quaestor.tools.email_tools import WaitingNotificationTool, CompletionNotificationTool
 
 @CrewBase
 class QuaestorCrew:
@@ -24,7 +24,7 @@ class QuaestorCrew:
 	def treasury_analyst(self) -> Agent:
 		return Agent(
 			config=self.agents_config['treasury_analyst'],
-			tools=[TreasuryTools()],
+			tools=[TreasuryPositionTool(), DistributionCalculatorTool()],
 			verbose=True
 		)
 
@@ -32,7 +32,7 @@ class QuaestorCrew:
 	def compliance_officer(self) -> Agent:
 		return Agent(
 			config=self.agents_config['compliance_officer'],
-			tools=[EmailTools()],
+			tools=[WaitingNotificationTool(), CompletionNotificationTool()],
 			verbose=True
 		)
 
@@ -81,9 +81,16 @@ class QuaestorCrew:
 	@crew
 	def crew(self) -> Crew:
 		"""Creates the Quaestor crew"""
+
+		manager = Agent(
+			config=self.agents_config['manager'],
+			allow_delegation=True
+		)
+
 		return Crew(
 			agents=self.agents, # Automatically collected by @agent decorator
 			tasks=self.tasks,   # Automatically collected by @task decorator
-			process=Process.sequential,
+			process=Process.hierarchical,
+			manager_agent=manager,
 			verbose=True,
 		)
