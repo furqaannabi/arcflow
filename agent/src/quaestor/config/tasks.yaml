@@ -66,4 +66,30 @@ notify_ceo_complete:
   context:
     - calculate_distribution
   
-  
+get_payroll_details:
+  description: >
+    Fetch the payroll details from the smart contract at {contract_address} using payroll ID {payroll_id}.
+    Use the "Get Payroll Details" tool with:
+    - contract_address: {contract_address}
+    - payroll_id: {payroll_id}
+    
+    Retrieve:
+    - List of all recipients (wallet addresses)
+    - Payment amount for each recipient
+    - Total amount required for this payroll
+    
+    After getting the payroll details, also check if the treasury has sufficient funds:
+    - Get the treasury position using pool address {pool_address} and owner address {owner_address}
+    - Compare available funds against total_required
+    - If funds are insufficient, report this clearly in your output
+  expected_output: >
+    A JSON object with:
+    - payroll_id
+    - contract_address
+    - recipients: list of {address, amount}
+    - total_required: sum of all payments
+    - recipient_count: number of recipients
+    - treasury_available: funds in treasury
+    - is_sufficient: boolean indicating if funds cover payroll
+    - shortfall: amount needed if insufficient (0 if sufficient)
+  agent: treasury_analyst

@@ -57,3 +57,52 @@ class DistributionCalculatorTool(BaseTool):
             "per_recipient": per_recipient,
             "recipient_count": recipient_count
         }
+
+class GetPayrollDetailsInput(BaseModel):
+    """Input for fetching payroll details from contract."""
+    payroll_id: str = Field(..., description="Payroll/payment ID from the smart contract")
+    contract_address: str = Field(..., description="Payroll smart contract address")
+
+
+class GetPayrollDetailsTool(BaseTool):
+    name: str = "Get Payroll Details"
+    description: str = "Calls smart contract to get list of recipients and amounts for a payroll ID."
+    args_schema: Type[BaseModel] = GetPayrollDetailsInput
+
+    def _run(self, payroll_id: str, contract_address: str) -> dict:
+        # TODO: Call actual smart contract
+        # Mock response for now:
+        recipients = [
+            {"address": "0xEmployee1...", "amount": 1000.00},
+            {"address": "0xEmployee2...", "amount": 1500.00},
+            {"address": "0xEmployee3...", "amount": 1200.00},
+        ]
+        total_required = sum(r["amount"] for r in recipients)
+        return {
+            "payroll_id": payroll_id,
+            "recipients": recipients,
+            "total_required": total_required,
+            "recipient_count": len(recipients)
+        }
+
+
+class CheckFundsSufficiencyInput(BaseModel):
+    """Input for checking if funds cover payroll."""
+    available_funds: float = Field(..., description="Total available in treasury")
+    required_amount: float = Field(..., description="Total required for payroll")
+
+
+class CheckFundsSufficiencyTool(BaseTool):
+    name: str = "Check Funds Sufficiency"
+    description: str = "Checks if treasury has enough funds to cover payroll."
+    args_schema: Type[BaseModel] = CheckFundsSufficiencyInput
+
+    def _run(self, available_funds: float, required_amount: float) -> dict:
+        is_sufficient = available_funds >= required_amount
+        shortfall = max(0, required_amount - available_funds)
+        return {
+            "is_sufficient": is_sufficient,
+            "available": available_funds,
+            "required": required_amount,
+            "shortfall": shortfall
+        }

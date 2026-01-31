@@ -12,8 +12,10 @@ def run():
     Run the crew.
     """
     inputs = {
+        "payroll_id": "PAY-2026-001",  
         "pool_address": "0x123...abc",
         "owner_address": "0xABC...123",
+        "contract_address": "0xPayrollContract...",
         "recipient_count": 50,
         "chain_id": 8453,
         "ceo_email": "williamikeji@gmail.com",

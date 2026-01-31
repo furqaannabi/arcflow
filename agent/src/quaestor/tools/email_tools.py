@@ -4,6 +4,12 @@ from pydantic import BaseModel, Field
 import os
 import resend
 from dotenv import load_dotenv
+from quaestor.tools.email_templates import (
+    waiting_template,
+    completion_template,
+    insufficient_funds_template
+)
+
 
 load_dotenv()
 
@@ -33,14 +39,7 @@ class WaitingNotificationTool(BaseTool):
     args_schema: Type[BaseModel] = WaitingNotificationInput
 
     def _run(self, gas_price: float, wait_minutes: int, override_link: str, to_email: str) -> dict:
-        html_body = f"""
-        <div style="font-family: Arial; max-width: 600px; margin: auto;">
-            <h1>⏳ Payroll Waiting</h1>
-            <p>Gas price is elevated: <strong>{gas_price:.2f} gwei</strong></p>
-            <p>Estimated wait: {wait_minutes} minutes</p>
-            <a href="{override_link}" style="background: #dc3545; color: white; padding: 10px 20px; text-decoration: none;">⚡ Pay Anyway</a>
-        </div>
-        """
+        html_body = waiting_template(gas_price, wait_minutes, override_link)
         try:
             email = resend.Emails.send({
                 "from": FROM_EMAIL,
@@ -59,19 +58,38 @@ class CompletionNotificationTool(BaseTool):
     args_schema: Type[BaseModel] = CompletionNotificationInput
 
     def _run(self, amount: float, employee_count: int, tx_hash: str, to_email: str) -> dict:
-        html_body = f"""
-        <div style="font-family: Arial; max-width: 600px; margin: auto;">
-            <h1>✅ Payroll Complete</h1>
-            <p>Amount: <strong>${amount:,.2f}</strong></p>
-            <p>Employees paid: {employee_count}</p>
-            <p>Transaction: <code>{tx_hash}</code></p>
-        </div>
-        """
+        html_body = completion_template(amount, employee_count, tx_hash)
         try:
             email = resend.Emails.send({
                 "from": FROM_EMAIL,
                 "to": [to_email],
                 "subject": "ArcFlow: Payroll Completed Successfully",
+                "html": html_body,
+            })
+            return {"status": "success", "id": email.get("id")}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+class InsufficientFundsNotificationInput(BaseModel):
+    """Input for sending insufficient funds notification."""
+    required_amount: float = Field(..., description="Total required for payroll")
+    available_funds: float = Field(..., description="Available funds in treasury")
+    to_email: str = Field(..., description="CEO email address")
+
+
+class InsufficientFundsNotificationTool(BaseTool):
+    name: str = "Send Insufficient Funds Notification"
+    description: str = "Sends email to CEO when treasury has insufficient funds for payroll."
+    args_schema: Type[BaseModel] = InsufficientFundsNotificationInput
+
+    def _run(self, required_amount: float, available_funds: float, to_email: str) -> dict:
+        shortfall = required_amount - available_funds
+        html_body = insufficient_funds_template(required_amount, available_funds, shortfall)
+        try:
+            email = resend.Emails.send({
+                "from": FROM_EMAIL,
+                "to": [to_email],
+                "subject": "ArcFlow: Insufficient Funds for Payroll",
                 "html": html_body,
             })
             return {"status": "success", "id": email.get("id")}
