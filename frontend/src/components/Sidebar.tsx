@@ -2,17 +2,13 @@ import { Link, useLocation } from "react-router-dom";
 import { 
   LayoutDashboard, 
   CreditCard, 
-  BarChart3, 
-  Users, 
   Settings, 
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
-  { icon: Users, label: "Employees", path: "/employees" },
   { icon: CreditCard, label: "Payroll", path: "/payroll" },
-  { icon: BarChart3, label: "History", path: "/history" },
   { icon: Settings, label: "Settings", path: "/settings" },
 ];
 
