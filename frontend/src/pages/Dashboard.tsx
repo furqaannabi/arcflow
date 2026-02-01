@@ -1,9 +1,11 @@
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth, SUPPORTED_CHAINS } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import ChainSwitcher from "@/components/ChainSwitcher";
 
 export default function Dashboard() {
-  const { userAddress, disconnect } = useAuth();
+  const { userAddress, disconnect, currentChain } = useAuth();
+  const chainName = SUPPORTED_CHAINS[currentChain]?.chain.name || 'Unknown';
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -14,9 +16,13 @@ export default function Dashboard() {
             <div className="w-8 h-8 bg-blue-600 rounded-lg"></div>
             <span className="text-lg font-semibold">ArcFlow</span>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="px-3 py-1.5 bg-gray-100 rounded-lg text-sm font-mono">
-              {userAddress?.slice(0, 6)}...{userAddress?.slice(-4)}
+          <div className="flex items-center gap-4">
+            <ChainSwitcher />
+            <div className="flex flex-col items-end">
+              <div className="px-3 py-1.5 bg-gray-100 rounded-lg text-sm font-mono">
+                {userAddress?.slice(0, 6)}...{userAddress?.slice(-4)}
+              </div>
+              <div className="text-xs text-gray-500 mt-1">{chainName}</div>
             </div>
             <Button onClick={disconnect} variant="ghost" size="sm">
               Disconnect

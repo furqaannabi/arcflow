@@ -21,9 +21,9 @@ export default function ConnectButton() {
     const chainName = SUPPORTED_CHAINS[currentChain].chain.name;
     
     return (
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-4">
         <ChainSwitcher />
-        <div className="hidden md:flex flex-col items-end">
+        <div className="flex flex-col items-end">
           <div className="px-3 py-1.5 bg-gray-100 rounded-lg text-sm font-mono">
             {userAddress.slice(0, 6)}...{userAddress.slice(-4)}
           </div>
