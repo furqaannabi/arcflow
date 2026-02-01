@@ -133,7 +133,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const switchChain = useCallback(async (chainKey: SupportedChainKey) => {
     if (!credential) {
-      throw new Error('No credential found. Please connect wallet first.');
+      console.log('No credential in state, falling back to full connection flow...');
+      await connect(chainKey);
+      return;
     }
 
     try {

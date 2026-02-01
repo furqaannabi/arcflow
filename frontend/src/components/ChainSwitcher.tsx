@@ -1,9 +1,9 @@
 import { useAuth, SUPPORTED_CHAINS, type SupportedChainKey } from "@/contexts/AuthContext";
 
 export default function ChainSwitcher() {
-  const { currentChain, switchChain, isConnected } = useAuth();
+  const { currentChain, switchChain } = useAuth();
 
-  if (!isConnected) return null;
+
 
   const handleChainChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newChain = e.target.value as SupportedChainKey;
@@ -15,10 +15,7 @@ export default function ChainSwitcher() {
   };
 
   return (
-    <div className="flex items-center gap-2">
-      <label htmlFor="chain-select" className="text-sm font-medium text-gray-700">
-        Network:
-      </label>
+
       <select
         id="chain-select"
         value={currentChain}
@@ -31,6 +28,6 @@ export default function ChainSwitcher() {
           </option>
         ))}
       </select>
-    </div>
+
   );
 }

@@ -1,73 +1,94 @@
-import { useAuth, SUPPORTED_CHAINS } from "@/contexts/AuthContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import ChainSwitcher from "@/components/ChainSwitcher";
+import Sidebar from "@/components/Sidebar";
+import StatsCard from "@/components/StatsCard";
+import CashFlowChart from "@/components/CashFlowChart";
+import RecentTransactions from "@/components/RecentTransactions";
+import EmployeesTable from "@/components/EmployeesTable";
+
+
 
 export default function Dashboard() {
-  const { userAddress, disconnect, currentChain } = useAuth();
-  const chainName = SUPPORTED_CHAINS[currentChain]?.chain.name || 'Unknown';
+  const { userAddress, disconnect, isConnected, connect } = useAuth();
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Nav */}
-      <nav className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-blue-600 rounded-lg"></div>
-            <span className="text-lg font-semibold">ArcFlow</span>
-          </div>
+    <div className="min-h-screen bg-gray-50 flex">
+      {/* Sidebar */}
+      <Sidebar />
+
+      {/* Main Content */}
+      <div className="flex-1">
+        {/* Header */}
+        <header className="bg-white border-b border-gray-100 h-16 px-8 flex items-center justify-between">
+          <h1 className="text-xl font-bold text-gray-900">Dashboard</h1>
+          
+          <div className="flex items-center gap-4">
           <div className="flex items-center gap-4">
             <ChainSwitcher />
-            <div className="flex flex-col items-end">
-              <div className="px-3 py-1.5 bg-gray-100 rounded-lg text-sm font-mono">
-                {userAddress?.slice(0, 6)}...{userAddress?.slice(-4)}
-              </div>
-              <div className="text-xs text-gray-500 mt-1">{chainName}</div>
-            </div>
-            <Button onClick={disconnect} variant="ghost" size="sm">
-              Disconnect
-            </Button>
+            
+            {isConnected ? (
+              <>
+                <div className="px-3 py-1.5 bg-gray-50 rounded-lg text-sm font-mono text-gray-600 border border-gray-100 min-w-[140px] text-center">
+                  {userAddress ? `${userAddress.slice(0, 6)}...${userAddress.slice(-4)}` : 'Connecting...'}
+                </div>
+                <Button onClick={disconnect} variant="ghost" size="sm" className="text-gray-500 hover:text-red-600">
+                  Disconnect
+                </Button>
+              </>
+            ) : (
+              <Button onClick={() => connect()} className="bg-blue-600 text-white hover:bg-blue-700">
+                Connect Wallet
+              </Button>
+            )}
           </div>
-        </div>
-      </nav>
+          </div>
+        </header>
 
-      {/* Dashboard Content */}
-      <div className="max-w-7xl mx-auto px-6 py-12">
-        <h1 className="text-3xl font-bold mb-8">Dashboard</h1>
-        
-        <div className="grid md:grid-cols-3 gap-6 mb-8">
-          <Card>
-            <CardContent className="pt-6">
-              <div className="text-sm text-gray-600 mb-1">Treasury Balance</div>
-              <div className="text-3xl font-bold">$0.00</div>
-              <div className="text-xs text-gray-500 mt-1">Coming soon</div>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardContent className="pt-6">
-              <div className="text-sm text-gray-600 mb-1">Yield Earned</div>
-              <div className="text-3xl font-bold text-green-600">$0.00</div>
-              <div className="text-xs text-gray-500 mt-1">Coming soon</div>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardContent className="pt-6">
-              <div className="text-sm text-gray-600 mb-1">Next Payroll</div>
-              <div className="text-3xl font-bold">--</div>
-              <div className="text-xs text-gray-500 mt-1">Not scheduled</div>
-            </CardContent>
-          </Card>
-        </div>
+        {/* content */}
+        <main className="p-8">
+          <div className="mb-8">
+            <h2 className="text-2xl font-bold text-gray-900">Overview</h2>
+            <p className="text-gray-500">Manage your treasury and autonomous payrolls</p>
+          </div>
 
-        <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
-          <h2 className="text-xl font-semibold mb-2">Welcome to ArcFlow</h2>
-          <p className="text-gray-600 mb-6">
-            Your wallet is connected. Dashboard features coming soon!
-          </p>
-          <Button disabled>Deposit Funds (Coming Soon)</Button>
-        </div>
+          {/* Stats Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <StatsCard 
+              title="Treasury Balance" 
+              value="$124,500.00" 
+              trend="up" 
+              percentage="12%" 
+              label="vs last month"
+            />
+            <StatsCard 
+              title="Active Employees" 
+              value="24" 
+              trend="up" 
+              percentage="4" 
+              label="new this month"
+            />
+            <StatsCard 
+              title="Total Payroll" 
+              value="$48,200.00" 
+              trend="down" 
+              percentage="2%" 
+              label="vs last month"
+            />
+          </div>
+
+          {/* Charts & Transactions */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8 h-[400px]">
+             <div className="lg:col-span-2 h-full">
+               <CashFlowChart />
+             </div>
+             <div className="h-full">
+               <RecentTransactions />
+             </div>
+          </div>
+          
+          <EmployeesTable />
+        </main>
       </div>
     </div>
   );
