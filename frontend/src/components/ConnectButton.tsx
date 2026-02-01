@@ -1,9 +1,9 @@
-import { useAuth, SUPPORTED_CHAINS } from "@/contexts/AuthContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import ChainSwitcher from "@/components/ChainSwitcher";
 
 export default function ConnectButton() {
-  const { isConnected, userAddress, connect, disconnect, currentChain } = useAuth();
+  const { isConnected, userAddress, connect, disconnect } = useAuth();
 
   const handleClick = async () => {
     if (isConnected) {
@@ -18,18 +18,13 @@ export default function ConnectButton() {
   };
 
   if (isConnected && userAddress) {
-    const chainName = SUPPORTED_CHAINS[currentChain].chain.name;
-    
     return (
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
         <ChainSwitcher />
-        <div className="flex flex-col items-end">
-          <div className="px-3 py-1.5 bg-gray-100 rounded-lg text-sm font-mono">
-            {userAddress.slice(0, 6)}...{userAddress.slice(-4)}
-          </div>
-          <div className="text-xs text-gray-500 mt-1">{chainName}</div>
+        <div className="px-3 py-1.5 bg-gray-100 rounded-lg text-sm font-mono font-medium text-gray-700">
+          {userAddress.slice(0, 6)}...{userAddress.slice(-4)}
         </div>
-        <Button onClick={handleClick} variant="outline" size="sm">
+        <Button onClick={handleClick} variant="ghost" size="sm" className="text-gray-500 hover:text-red-600 hover:bg-red-50">
           Disconnect
         </Button>
       </div>
