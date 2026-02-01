@@ -1,10 +1,19 @@
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import ConnectButton from "@/components/ConnectButton";
+import { useAuth } from "@/contexts/AuthContext";
+import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 
 export default function Landing() {
-  const handleConnect = () => {
-    window.location.href = "/dashboard";
-  };
+  const { isConnected } = useAuth();
+  const navigate = useNavigate();
+
+  // Redirect to dashboard when connected
+  useEffect(() => {
+    if (isConnected) {
+      navigate('/dashboard');
+    }
+  }, [isConnected, navigate]);
 
   return (
     <div className="min-h-screen bg-white">
@@ -15,9 +24,7 @@ export default function Landing() {
             <div className="w-8 h-8 bg-blue-600 rounded-lg"></div>
             <span className="text-lg font-semibold">ArcFlow</span>
           </div>
-          <Button onClick={handleConnect} className="bg-blue-600 hover:bg-blue-700">
-            Get Started
-          </Button>
+          <ConnectButton />
         </div>
       </nav>
 
@@ -31,13 +38,7 @@ export default function Landing() {
             Pay your distributed workforce on any blockchain. Automated, secure, and earning yield while funds wait.
           </p>
           <div className="flex gap-3 justify-center">
-            <Button 
-              onClick={handleConnect}
-              size="lg"
-              className="bg-blue-600 hover:bg-blue-700 px-8"
-            >
-              Start Free Trial
-            </Button>
+            <ConnectButton />
             <Button 
               size="lg"
               variant="outline"
@@ -150,13 +151,7 @@ export default function Landing() {
           <p className="text-blue-100 mb-8 text-lg">
             Join hundreds of companies simplifying global payroll.
           </p>
-          <Button 
-            onClick={handleConnect}
-            size="lg"
-            className="bg-white text-blue-600 hover:bg-gray-100 px-8"
-          >
-            Start Free Trial
-          </Button>
+          <ConnectButton />
         </div>
       </section>
 

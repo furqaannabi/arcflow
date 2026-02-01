@@ -1,20 +1,25 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { AuthProvider } from "@/contexts/AuthContext";
 import Landing from "@/pages/Landing";
+import Dashboard from "@/pages/Dashboard";
 
 function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Landing />} />
-        {/* Future routes */}
-        {/* <Route path="/dashboard" element={<Dashboard />} /> */}
-        {/* <Route path="/deposit" element={<Deposit />} /> */}
-        {/* <Route path="/recipients" element={<Recipients />} /> */}
-        {/* <Route path="/withdraw" element={<Withdraw />} /> */}
-        {/* <Route path="/history" element={<History />} /> */}
-      </Routes>
-    </BrowserRouter>
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<Landing />} />
+          <Route path="/dashboard" element={<Dashboard />} />
+          {/* Future routes */}
+          {/* <Route path="/deposit" element={<Deposit />} /> */}
+          {/* <Route path="/recipients" element={<Recipients />} /> */}
+          {/* <Route path="/withdraw" element={<Withdraw />} /> */}
+          {/* <Route path="/history" element={<History />} /> */}
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
   );
 }
 
 export default App;
+
