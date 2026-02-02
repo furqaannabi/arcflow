@@ -117,7 +117,7 @@ class CircleGatewayService:
         amount: float,
         recipient_address: str,
         dest_chain_id: int,
-        source_chain_id: int = 11155111  # Default: Ethereum Sepolia
+        source_chain_id: int = 84532  # Default: Base Sepolia
     ) -> TransferResult:
         """
         Execute a cross-chain USDC transfer via Circle Bridge Kit.

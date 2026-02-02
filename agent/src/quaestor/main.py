@@ -19,11 +19,11 @@ def run():
         "owner_address": "0xABC...123",
         "contract_address": "0xPayrollContract...",
         "recipient_count": 50,
-        "chain_id": 11155111,
+        "chain_id": 84532,  # Base Sepolia
         "ceo_email": "williamikeji@gmail.com",
         "override_link": f"{os.getenv('APP_BASE_URL', 'https://arcflow.io')}/override/token123",
         "hours_waited": 2,
-        "source_chain_id": 11155111,  # Treasury on Base
+        "source_chain_id": 84532,  # Base Sepolia
     }
     QuaestorCrew().crew().kickoff(inputs=inputs)
 
