@@ -47,7 +47,7 @@ export default function CreatePayrollModal({ onClose }: CreatePayrollModalProps)
   };
 
   const totalAmount = employees.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
-  
+
   const formatDateRange = (start: string, end: string) => {
     if (!start || !end) return "";
     const startDate = new Date(start);
@@ -75,8 +75,8 @@ export default function CreatePayrollModal({ onClose }: CreatePayrollModalProps)
             <div className="space-y-6 max-w-md mx-auto py-10">
               <div className="space-y-2">
                 <label className="text-sm font-medium text-gray-700">Payroll Name</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   placeholder="e.g. March Engineering Payroll"
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   value={payrollName}
@@ -86,8 +86,8 @@ export default function CreatePayrollModal({ onClose }: CreatePayrollModalProps)
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-gray-700">Period Start</label>
-                  <input 
-                    type="date" 
+                  <input
+                    type="date"
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                     value={startDate}
                     onChange={(e) => setStartDate(e.target.value)}
@@ -95,8 +95,8 @@ export default function CreatePayrollModal({ onClose }: CreatePayrollModalProps)
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-gray-700">Period End</label>
-                  <input 
-                    type="date" 
+                  <input
+                    type="date"
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                     value={endDate}
                     onChange={(e) => setEndDate(e.target.value)}
@@ -115,22 +115,22 @@ export default function CreatePayrollModal({ onClose }: CreatePayrollModalProps)
                 </Button>
               </div>
 
-              {employees.map((employee, index) => (
+              {employees.map((employee) => (
                 <div key={employee.id} className="p-4 bg-gray-50 rounded-lg border border-gray-100 relative">
                   {employees.length > 1 && (
-                    <button 
+                    <button
                       onClick={() => removeEmployee(employee.id)}
                       className="absolute top-4 right-4 p-1 text-gray-400 hover:text-red-500 transition-colors"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
                   )}
-                  
+
                   <div className="grid grid-cols-2 gap-4 mb-4">
                     <div className="space-y-1">
                       <label className="text-xs font-medium text-gray-500">Name</label>
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
                         value={employee.name}
                         onChange={(e) => updateEmployee(employee.id, 'name', e.target.value)}
@@ -139,8 +139,8 @@ export default function CreatePayrollModal({ onClose }: CreatePayrollModalProps)
                     </div>
                     <div className="space-y-1">
                       <label className="text-xs font-medium text-gray-500">Role</label>
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
                         value={employee.role}
                         onChange={(e) => updateEmployee(employee.id, 'role', e.target.value)}
@@ -152,8 +152,8 @@ export default function CreatePayrollModal({ onClose }: CreatePayrollModalProps)
                   <div className="grid grid-cols-2 gap-4 mb-4">
                     <div className="space-y-1">
                       <label className="text-xs font-medium text-gray-500">Wallet Address</label>
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none"
                         value={employee.walletAddress}
                         onChange={(e) => updateEmployee(employee.id, 'walletAddress', e.target.value)}
@@ -162,7 +162,7 @@ export default function CreatePayrollModal({ onClose }: CreatePayrollModalProps)
                     </div>
                     <div className="space-y-1">
                       <label className="text-xs font-medium text-gray-500">Destination Chain</label>
-                      <select 
+                      <select
                         className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
                         value={employee.destinationChain}
                         onChange={(e) => updateEmployee(employee.id, 'destinationChain', e.target.value)}
@@ -178,8 +178,8 @@ export default function CreatePayrollModal({ onClose }: CreatePayrollModalProps)
                   <div>
                     <div className="space-y-1">
                       <label className="text-xs font-medium text-gray-500">Amount (USDC)</label>
-                      <input 
-                        type="number" 
+                      <input
+                        type="number"
                         className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
                         value={employee.amount}
                         onChange={(e) => updateEmployee(employee.id, 'amount', e.target.value)}
@@ -230,7 +230,7 @@ export default function CreatePayrollModal({ onClose }: CreatePayrollModalProps)
             </Button>
           )}
           {step < 3 ? (
-            <Button 
+            <Button
               className="bg-blue-600 hover:bg-blue-700 text-white gap-2"
               onClick={() => setStep(step + 1)}
               disabled={step === 1 && (!payrollName || !startDate || !endDate)}
@@ -238,7 +238,7 @@ export default function CreatePayrollModal({ onClose }: CreatePayrollModalProps)
               Next Step <ArrowRight className="w-4 h-4" />
             </Button>
           ) : (
-            <Button 
+            <Button
               className="bg-green-600 hover:bg-green-700 text-white gap-2"
               onClick={onClose} // Just close for mock
             >
