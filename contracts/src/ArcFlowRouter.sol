@@ -8,58 +8,98 @@ import {
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
-import {ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
-import {BalanceDelta, toBalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
+import {
+    ModifyLiquidityParams,
+    SwapParams
+} from "v4-core/src/types/PoolOperation.sol";
+import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {
     SafeERC20
 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ArcFlowHook} from "./ArcFlowHook.sol";
+import {IGatewayWallet} from "./interfaces/ICircleGateway.sol";
 
 /// @title ArcFlow Router
-/// @notice Helper contract for interacting with ArcFlowHook pools via unlock callback
+/// @notice Single-sided USDC deposit into existing USDC-USDT pool
+/// @dev User deposits USDC only - 50% swapped to USDT for LP, swapped back on withdrawal
 contract ArcFlowRouter is IUnlockCallback {
     using SafeERC20 for IERC20;
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
 
+    // ============ Structs ============
+
+    struct CallbackData {
+        uint8 action; // 0=addLiquidity, 1=removeLiquidity, 2=swap
+        address sender;
+        bytes data;
+    }
+
+    struct LPPosition {
+        uint256 payrollId;
+        uint128 liquidity;
+        uint256 usdcDeposited;
+        uint256 depositTime;
+        uint256 payrollDate;
+        bytes32 payrollStateHash; // Yellow Network state verification
+    }
+
     // ============ State ============
 
     IPoolManager public immutable poolManager;
-    ArcFlowHook public immutable hook;
+    IERC20 public immutable usdc;
+    IERC20 public immutable usdt;
+    IGatewayWallet public gatewayWallet;
+
+    PoolKey public poolKey;
+    PoolId public poolId;
+
     address public agent;
     address public owner;
 
-    // Callback data struct
-    struct CallbackData {
-        PoolKey key;
-        ModifyLiquidityParams params;
-        bytes hookData;
-        address sender;
-        bool isAdd;
-    }
+    // LP positions held by this contract
+    mapping(address => LPPosition) public positions;
+    uint256 public totalLiquidity;
+    uint256 public nextPayrollId;
+
+    // Full range ticks
+    int24 constant TICK_LOWER = -887220;
+    int24 constant TICK_UPPER = 887220;
 
     // ============ Events ============
 
-    event PoolCreated(PoolId indexed poolId, address token0, address token1);
-    event LiquidityAdded(
-        PoolId indexed poolId,
+    event Deposited(
+        uint256 indexed payrollId,
         address indexed provider,
-        uint128 liquidity
+        uint256 usdcAmount,
+        uint128 liquidity,
+        uint256 payrollDate
     );
-    event LiquidityRemoved(
-        PoolId indexed poolId,
+    event Withdrawn(
         address indexed provider,
-        uint128 liquidity
+        uint128 liquidity,
+        uint256 usdcBridged
     );
     event AgentUpdated(address indexed oldAgent, address indexed newAgent);
+    event GatewayDepositInitiated(uint256 amount, address recipient);
+
+    // Yellow Network state verification
+    event PayrollStateCreated(
+        uint256 indexed payrollId,
+        bytes32 stateHash,
+        address provider,
+        uint256 amount,
+        uint256 payrollDate
+    );
 
     // ============ Errors ============
 
-    error InvalidTokenOrder();
-    error ZeroLiquidity();
+    error ZeroAmount();
     error Unauthorized();
+    error InsufficientBalance();
+    error NoPosition();
+    error PayrollNotReady();
 
     // ============ Modifiers ============
 
@@ -75,10 +115,20 @@ contract ArcFlowRouter is IUnlockCallback {
 
     // ============ Constructor ============
 
-    constructor(IPoolManager _poolManager, ArcFlowHook _hook) {
+    constructor(
+        IPoolManager _poolManager,
+        PoolKey memory _existingPoolKey,
+        address _gatewayWallet
+    ) {
         poolManager = _poolManager;
-        hook = _hook;
+        poolKey = _existingPoolKey;
+        poolId = _existingPoolKey.toId();
         owner = msg.sender;
+        gatewayWallet = IGatewayWallet(_gatewayWallet);
+
+        // Set token references from pool key
+        usdc = IERC20(Currency.unwrap(_existingPoolKey.currency0));
+        usdt = IERC20(Currency.unwrap(_existingPoolKey.currency1));
     }
 
     // ============ Admin ============
@@ -88,105 +138,187 @@ contract ArcFlowRouter is IUnlockCallback {
         agent = _agent;
     }
 
-    // ============ Pool Creation ============
-
-    function createPool(
-        address token0,
-        address token1,
-        uint24 fee,
-        uint160 sqrtPriceX96
-    ) external returns (PoolKey memory key, PoolId poolId) {
-        if (token0 >= token1) revert InvalidTokenOrder();
-
-        key = PoolKey({
-            currency0: Currency.wrap(token0),
-            currency1: Currency.wrap(token1),
-            fee: fee,
-            tickSpacing: _getTickSpacing(fee),
-            hooks: IHooks(address(hook))
-        });
-
-        poolId = key.toId();
-        poolManager.initialize(key, sqrtPriceX96);
-
-        emit PoolCreated(poolId, token0, token1);
+    function setGatewayWallet(address _gateway) external onlyOwner {
+        gatewayWallet = IGatewayWallet(_gateway);
     }
 
-    // ============ Liquidity Operations ============
+    // ============ Single-Sided Deposit ============
 
-    function addLiquidity(
-        PoolKey calldata key,
+    /// @notice Deposit USDC with scheduled payroll date
+    /// @param usdcAmount Amount of USDC to deposit
+    /// @param payrollDate Scheduled time for withdrawal/bridging
+    function deposit(
+        uint256 usdcAmount,
+        uint256 payrollDate
+    ) external returns (uint256 payrollId, uint128 liquidity) {
+        if (usdcAmount == 0) revert ZeroAmount();
+        if (payrollDate <= block.timestamp) revert ZeroAmount(); // payroll must be in future
+
+        // Transfer USDC from user
+        usdc.safeTransferFrom(msg.sender, address(this), usdcAmount);
+
+        // Swap 50% USDC to USDT
+        uint256 swapAmount = usdcAmount / 2;
+        uint256 usdtReceived = _swap(true, swapAmount); // true = USDC to USDT
+
+        // Add liquidity with both tokens
+        uint256 usdcForLp = usdcAmount - swapAmount;
+        liquidity = _addLiquidity(usdcForLp, usdtReceived);
+
+        // Generate payroll ID
+        payrollId = ++nextPayrollId;
+
+        // Compute state hash for Yellow Network verification
+        bytes32 stateHash = keccak256(
+            abi.encodePacked(
+                payrollId,
+                msg.sender,
+                usdcAmount,
+                payrollDate,
+                block.chainid
+            )
+        );
+
+        // Track position
+        positions[msg.sender] = LPPosition({
+            payrollId: payrollId,
+            liquidity: liquidity,
+            usdcDeposited: usdcAmount,
+            depositTime: block.timestamp,
+            payrollDate: payrollDate,
+            payrollStateHash: stateHash
+        });
+        totalLiquidity += liquidity;
+
+        emit Deposited(
+            payrollId,
+            msg.sender,
+            usdcAmount,
+            liquidity,
+            payrollDate
+        );
+        emit PayrollStateCreated(
+            payrollId,
+            stateHash,
+            msg.sender,
+            usdcAmount,
+            payrollDate
+        );
+    }
+
+    // ============ Withdrawal to Gateway (Agent Only) ============
+
+    /// @notice Withdraw LP, swap USDT back to USDC, deposit to Circle Gateway
+    function withdraw(
+        address provider
+    ) external onlyAgent returns (uint256 usdcBridged) {
+        LPPosition memory pos = positions[provider];
+        if (pos.liquidity == 0) revert NoPosition();
+        if (block.timestamp < pos.payrollDate) revert PayrollNotReady();
+
+        // Remove liquidity - get USDC and USDT
+        (uint256 usdc0, uint256 usdt0) = _removeLiquidity(pos.liquidity);
+
+        // Swap all USDT back to USDC
+        uint256 usdcFromSwap = 0;
+        if (usdt0 > 0) {
+            usdcFromSwap = _swap(false, usdt0); // false = USDT to USDC
+        }
+
+        usdcBridged = usdc0 + usdcFromSwap;
+
+        // Clear position
+        uint128 liq = pos.liquidity;
+        delete positions[provider];
+        totalLiquidity -= liq;
+
+        // Deposit all USDC to Circle Gateway
+        usdc.approve(address(gatewayWallet), usdcBridged);
+        gatewayWallet.deposit(address(usdc), usdcBridged);
+
+        emit Withdrawn(provider, liq, usdcBridged);
+    }
+
+    // ============ Internal: Swap ============
+
+    function _swap(
+        bool zeroForOne,
+        uint256 amountIn
+    ) internal returns (uint256 amountOut) {
+        // Encode swap data
+        bytes memory swapData = abi.encode(zeroForOne, amountIn);
+
+        CallbackData memory data = CallbackData({
+            action: 2, // swap
+            sender: address(this),
+            data: swapData
+        });
+
+        bytes memory result = poolManager.unlock(abi.encode(data));
+        amountOut = abi.decode(result, (uint256));
+    }
+
+    // ============ Internal: Add Liquidity ============
+
+    function _addLiquidity(
         uint256 amount0,
-        uint256 amount1,
-        int24 tickLower,
-        int24 tickUpper
-    ) external returns (uint128 liquidity) {
-        address token0 = Currency.unwrap(key.currency0);
-        address token1 = Currency.unwrap(key.currency1);
-
-        // Transfer tokens from sender to this contract
-        IERC20(token0).safeTransferFrom(msg.sender, address(this), amount0);
-        IERC20(token1).safeTransferFrom(msg.sender, address(this), amount1);
-
-        // Calculate liquidity
+        uint256 amount1
+    ) internal returns (uint128 liquidity) {
         liquidity = uint128(amount0 < amount1 ? amount0 : amount1);
-        if (liquidity == 0) revert ZeroLiquidity();
 
-        // Create params
         ModifyLiquidityParams memory params = ModifyLiquidityParams({
-            tickLower: tickLower,
-            tickUpper: tickUpper,
+            tickLower: TICK_LOWER,
+            tickUpper: TICK_UPPER,
             liquidityDelta: int256(uint256(liquidity)),
             salt: bytes32(0)
         });
 
-        // Call through unlock
+        bytes memory lpData = abi.encode(params);
+
         CallbackData memory data = CallbackData({
-            key: key,
-            params: params,
-            hookData: "",
-            sender: msg.sender,
-            isAdd: true
+            action: 0, // addLiquidity
+            sender: address(this),
+            data: lpData
         });
 
         poolManager.unlock(abi.encode(data));
-
-        emit LiquidityAdded(key.toId(), msg.sender, liquidity);
     }
 
-    function addFullRangeLiquidity(
-        PoolKey calldata key,
-        uint256 amount0,
-        uint256 amount1
-    ) external returns (uint128 liquidity) {
-        return this.addLiquidity(key, amount0, amount1, -887220, 887220);
-    }
+    // ============ Internal: Remove Liquidity ============
 
-    function removeLiquidity(
-        PoolKey calldata key,
-        uint128 liquidity,
-        int24 tickLower,
-        int24 tickUpper,
-        address recipient
-    ) external onlyAgent {
+    function _removeLiquidity(
+        uint128 liquidity
+    ) internal returns (uint256 amount0, uint256 amount1) {
         ModifyLiquidityParams memory params = ModifyLiquidityParams({
-            tickLower: tickLower,
-            tickUpper: tickUpper,
+            tickLower: TICK_LOWER,
+            tickUpper: TICK_UPPER,
             liquidityDelta: -int256(uint256(liquidity)),
             salt: bytes32(0)
         });
 
+        bytes memory lpData = abi.encode(params);
+
         CallbackData memory data = CallbackData({
-            key: key,
-            params: params,
-            hookData: abi.encode(recipient),
-            sender: msg.sender,
-            isAdd: false
+            action: 1, // removeLiquidity
+            sender: address(this),
+            data: lpData
         });
 
-        poolManager.unlock(abi.encode(data));
+        bytes memory result = poolManager.unlock(abi.encode(data));
+        (amount0, amount1) = abi.decode(result, (uint256, uint256));
+    }
 
-        emit LiquidityRemoved(key.toId(), msg.sender, liquidity);
+    // ============ Circle Gateway ============
+
+    function depositToGateway(
+        uint256 amount,
+        address recipient
+    ) external onlyAgent {
+        if (usdc.balanceOf(address(this)) < amount)
+            revert InsufficientBalance();
+        usdc.approve(address(gatewayWallet), amount);
+        gatewayWallet.deposit(address(usdc), amount);
+        emit GatewayDepositInitiated(amount, recipient);
     }
 
     // ============ Unlock Callback ============
@@ -198,59 +330,98 @@ contract ArcFlowRouter is IUnlockCallback {
 
         CallbackData memory data = abi.decode(rawData, (CallbackData));
 
-        // Perform the liquidity modification
-        (BalanceDelta delta, ) = poolManager.modifyLiquidity(
-            data.key,
-            data.params,
-            data.hookData
-        );
+        if (data.action == 0) {
+            // Add Liquidity
+            ModifyLiquidityParams memory params = abi.decode(
+                data.data,
+                (ModifyLiquidityParams)
+            );
+            (BalanceDelta delta, ) = poolManager.modifyLiquidity(
+                poolKey,
+                params,
+                ""
+            );
 
-        // Handle delta settlement
-        int128 delta0 = delta.amount0();
-        int128 delta1 = delta.amount1();
-
-        if (data.isAdd) {
-            // Adding liquidity: delta is NEGATIVE (we owe tokens to pool)
-            // We need to sync, transfer tokens, then settle
-            if (delta0 < 0) {
-                uint256 amount = uint256(uint128(-delta0));
-                poolManager.sync(data.key.currency0);
-                IERC20(Currency.unwrap(data.key.currency0)).transfer(
-                    address(poolManager),
-                    amount
-                );
+            // Settle negative deltas (we owe pool)
+            if (delta.amount0() < 0) {
+                uint256 amt = uint256(uint128(-delta.amount0()));
+                poolManager.sync(poolKey.currency0);
+                usdc.transfer(address(poolManager), amt);
                 poolManager.settle();
             }
-            if (delta1 < 0) {
-                uint256 amount = uint256(uint128(-delta1));
-                poolManager.sync(data.key.currency1);
-                IERC20(Currency.unwrap(data.key.currency1)).transfer(
-                    address(poolManager),
-                    amount
-                );
+            if (delta.amount1() < 0) {
+                uint256 amt = uint256(uint128(-delta.amount1()));
+                poolManager.sync(poolKey.currency1);
+                usdt.transfer(address(poolManager), amt);
                 poolManager.settle();
             }
-        } else {
-            // Removing liquidity: delta is POSITIVE (pool owes us tokens)
-            // Take the tokens from pool manager and send to recipient
-            address recipient = abi.decode(data.hookData, (address));
+            return "";
+        } else if (data.action == 1) {
+            // Remove Liquidity
+            ModifyLiquidityParams memory params = abi.decode(
+                data.data,
+                (ModifyLiquidityParams)
+            );
+            (BalanceDelta delta, ) = poolManager.modifyLiquidity(
+                poolKey,
+                params,
+                ""
+            );
 
-            if (delta0 > 0) {
-                uint256 amount = uint256(uint128(delta0));
-                poolManager.take(data.key.currency0, address(this), amount);
-                IERC20(Currency.unwrap(data.key.currency0)).transfer(
-                    recipient,
-                    amount
-                );
+            uint256 amt0 = 0;
+            uint256 amt1 = 0;
+
+            // Take positive deltas (pool owes us)
+            if (delta.amount0() > 0) {
+                amt0 = uint256(uint128(delta.amount0()));
+                poolManager.take(poolKey.currency0, address(this), amt0);
             }
-            if (delta1 > 0) {
-                uint256 amount = uint256(uint128(delta1));
-                poolManager.take(data.key.currency1, address(this), amount);
-                IERC20(Currency.unwrap(data.key.currency1)).transfer(
-                    recipient,
-                    amount
-                );
+            if (delta.amount1() > 0) {
+                amt1 = uint256(uint128(delta.amount1()));
+                poolManager.take(poolKey.currency1, address(this), amt1);
             }
+            return abi.encode(amt0, amt1);
+        } else if (data.action == 2) {
+            // Swap
+            (bool zeroForOne, uint256 amountIn) = abi.decode(
+                data.data,
+                (bool, uint256)
+            );
+
+            // Execute swap
+            BalanceDelta delta = poolManager.swap(
+                poolKey,
+                SwapParams({
+                    zeroForOne: zeroForOne,
+                    amountSpecified: -int256(amountIn), // exact input
+                    sqrtPriceLimitX96: zeroForOne
+                        ? 4295128740
+                        : 1461446703485210103287273052203988822378723970341
+                }),
+                ""
+            );
+
+            uint256 amountOut;
+
+            if (zeroForOne) {
+                // Paid USDC, received USDT
+                poolManager.sync(poolKey.currency0);
+                usdc.transfer(address(poolManager), amountIn);
+                poolManager.settle();
+
+                amountOut = uint256(uint128(delta.amount1()));
+                poolManager.take(poolKey.currency1, address(this), amountOut);
+            } else {
+                // Paid USDT, received USDC
+                poolManager.sync(poolKey.currency1);
+                usdt.transfer(address(poolManager), amountIn);
+                poolManager.settle();
+
+                amountOut = uint256(uint128(delta.amount0()));
+                poolManager.take(poolKey.currency0, address(this), amountOut);
+            }
+
+            return abi.encode(amountOut);
         }
 
         return "";
@@ -258,45 +429,26 @@ contract ArcFlowRouter is IUnlockCallback {
 
     // ============ View Functions ============
 
-    function getPoolKey(
-        address token0,
-        address token1,
-        uint24 fee
-    ) external view returns (PoolKey memory) {
-        return
-            PoolKey({
-                currency0: Currency.wrap(token0),
-                currency1: Currency.wrap(token1),
-                fee: fee,
-                tickSpacing: _getTickSpacing(fee),
-                hooks: IHooks(address(hook))
-            });
+    function getPoolKey() external view returns (PoolKey memory) {
+        return poolKey;
     }
 
-    function getPoolDeposit(
-        PoolId poolId
-    )
-        external
-        view
-        returns (
-            address tokenA,
-            address tokenB,
-            uint256 amountA,
-            uint256 amountB,
-            uint256 timestamp
-        )
-    {
-        (tokenA, tokenB, amountA, amountB, timestamp) = hook.poolDeposits(
-            poolId
-        );
+    function getPoolId() external view returns (PoolId) {
+        return poolId;
     }
 
-    // ============ Internal ============
+    function getPosition(
+        address provider
+    ) external view returns (LPPosition memory) {
+        return positions[provider];
+    }
 
-    function _getTickSpacing(uint24 fee) internal pure returns (int24) {
-        if (fee == 500) return 10;
-        if (fee == 3000) return 60;
-        if (fee == 10000) return 200;
-        return 60;
+    // ============ Emergency ============
+
+    function emergencyWithdraw(
+        address token,
+        uint256 amount
+    ) external onlyOwner {
+        IERC20(token).safeTransfer(owner, amount);
     }
 }

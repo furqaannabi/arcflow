@@ -5,15 +5,35 @@ import {
     ReentrancyGuard
 } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {
+    MessageHashUtils
+} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {PayrollRecipient} from "./structs/ArcPayrollDistributorStructs.sol";
+import {IGatewayMinter} from "./interfaces/ICircleGateway.sol";
 
-/// @title ArcFlow Payroll Distributor
-/// @notice Direct payroll distribution using native currency
+/// @title ArcFlow Payroll Distributor (Arc Chain)
+/// @notice Mints USDC from Circle Gateway and distributes to employees
+/// @dev Verifies payroll state from Yellow Network before distribution
 contract ArcPayrollDistributor is ReentrancyGuard, Ownable {
+    using ECDSA for bytes32;
+    using MessageHashUtils for bytes32;
+
+    // ============ State ============
+
+    IGatewayMinter public immutable gatewayMinter;
+    mapping(address => bool) public authorizedAgents;
+    mapping(bytes32 => bool) public processedPayrolls; // prevent replay
+    uint256 public currentBatchId;
+
+    // Ethereum chain ID for state hash verification
+    uint256 public constant ETH_CHAIN_ID = 1; // mainnet, change for testnet
+
     // ============ Events ============
 
     event PayrollExecuted(
         uint256 indexed batchId,
+        bytes32 indexed stateHash,
         uint256 totalAmount,
         uint256 recipientCount
     );
@@ -23,6 +43,7 @@ contract ArcPayrollDistributor is ReentrancyGuard, Ownable {
         uint256 amount
     );
     event AgentAuthorized(address indexed agent, bool authorized);
+    event PayrollStateVerified(bytes32 indexed stateHash, address signer);
 
     // ============ Errors ============
 
@@ -31,24 +52,21 @@ contract ArcPayrollDistributor is ReentrancyGuard, Ownable {
     error ZeroAddress();
     error EmptyRecipients();
     error TransferFailed();
-
-    // ============ State ============
-
-    mapping(address => bool) public authorizedAgents;
-    uint256 public currentBatchId;
+    error InvalidStateSignature();
+    error PayrollAlreadyProcessed();
+    error StateMismatch();
 
     // ============ Modifiers ============
 
     modifier onlyAuthorizedAgent() {
-        if (!authorizedAgents[msg.sender] && msg.sender != owner()) {
+        if (!authorizedAgents[msg.sender] && msg.sender != owner())
             revert UnauthorizedAgent();
-        }
         _;
     }
 
-    constructor() Ownable(msg.sender) {}
-
-    // ============ Admin ============
+    constructor(address _gatewayMinter) Ownable(msg.sender) {
+        gatewayMinter = IGatewayMinter(_gatewayMinter);
+    }
 
     function setAgentAuthorization(
         address agent,
@@ -59,27 +77,92 @@ contract ArcPayrollDistributor is ReentrancyGuard, Ownable {
         emit AgentAuthorized(agent, authorized);
     }
 
-    // ============ Payroll ============
+    // ============ Yellow Network State Verification ============
 
-    /// @notice Execute payroll distribution with native currency
-    function executePayroll(
+    /// @notice Verify payroll state signed via Yellow Network
+    /// @param payrollId The payroll ID from Ethereum router
+    /// @param provider The employer address
+    /// @param amount The total USDC amount
+    /// @param payrollDate The scheduled payroll date
+    /// @param stateSignature Yellow Network signed state
+    /// @return stateHash The computed state hash
+    function verifyPayrollState(
+        uint256 payrollId,
+        address provider,
+        uint256 amount,
+        uint256 payrollDate,
+        bytes calldata stateSignature
+    ) public view returns (bytes32 stateHash) {
+        // Compute expected state hash (must match Ethereum router)
+        stateHash = keccak256(
+            abi.encodePacked(
+                payrollId,
+                provider,
+                amount,
+                payrollDate,
+                ETH_CHAIN_ID
+            )
+        );
+
+        // Verify signature from authorized agent
+        bytes32 ethSignedHash = stateHash.toEthSignedMessageHash();
+        address signer = ethSignedHash.recover(stateSignature);
+
+        if (!authorizedAgents[signer] && signer != owner()) {
+            revert InvalidStateSignature();
+        }
+    }
+
+    // ============ Main Distribution Function ============
+
+    /// @notice Mint from gateway, verify state, and distribute
+    /// @param attestation Circle Gateway attestation
+    /// @param signature Circle Gateway signature
+    /// @param payrollId Payroll ID from Ethereum
+    /// @param provider Employer address
+    /// @param totalAmount Expected total amount
+    /// @param payrollDate Scheduled date
+    /// @param stateSignature Yellow Network state signature
+    /// @param recipients Employee payment details
+    function mintVerifyAndDistribute(
+        bytes calldata attestation,
+        bytes calldata signature,
+        uint256 payrollId,
+        address provider,
+        uint256 totalAmount,
+        uint256 payrollDate,
+        bytes calldata stateSignature,
         PayrollRecipient[] calldata recipients
-    )
-        external
-        payable
-        onlyAuthorizedAgent
-        nonReentrant
-        returns (uint256 batchId)
-    {
+    ) external onlyAuthorizedAgent nonReentrant returns (uint256 batchId) {
         if (recipients.length == 0) revert EmptyRecipients();
 
-        uint256 total = 0;
+        // Step 1: Verify Yellow Network state
+        bytes32 stateHash = verifyPayrollState(
+            payrollId,
+            provider,
+            totalAmount,
+            payrollDate,
+            stateSignature
+        );
+
+        // Step 2: Check not already processed
+        if (processedPayrolls[stateHash]) revert PayrollAlreadyProcessed();
+        processedPayrolls[stateHash] = true;
+
+        // Step 3: Mint from Circle Gateway
+        uint256 balanceBefore = address(this).balance;
+        gatewayMinter.gatewayMint(attestation, signature);
+        uint256 minted = address(this).balance - balanceBefore;
+
+        // Step 4: Verify amounts match
+        uint256 recipientTotal = 0;
         for (uint256 i = 0; i < recipients.length; i++) {
-            total += recipients[i].amount;
+            recipientTotal += recipients[i].amount;
         }
+        if (minted < recipientTotal) revert InsufficientBalance();
+        if (recipientTotal != totalAmount) revert StateMismatch();
 
-        if (msg.value != total) revert InsufficientBalance();
-
+        // Step 5: Distribute
         batchId = ++currentBatchId;
 
         for (uint256 i = 0; i < recipients.length; i++) {
@@ -95,20 +178,33 @@ contract ArcPayrollDistributor is ReentrancyGuard, Ownable {
             );
         }
 
-        emit PayrollExecuted(batchId, total, recipients.length);
+        emit PayrollStateVerified(stateHash, msg.sender);
+        emit PayrollExecuted(
+            batchId,
+            stateHash,
+            recipientTotal,
+            recipients.length
+        );
     }
 
-    // ============ View ============
-
-    function isAuthorizedAgent(address agent) external view returns (bool) {
-        return authorizedAgents[agent];
-    }
+    // ============ View Functions ============
 
     function getBalance() external view returns (uint256) {
         return address(this).balance;
     }
 
-    // ============ Receive ============
+    function isPayrollProcessed(
+        bytes32 stateHash
+    ) external view returns (bool) {
+        return processedPayrolls[stateHash];
+    }
+
+    // ============ Emergency ============
+
+    function emergencyWithdraw(uint256 amount) external onlyOwner {
+        (bool success, ) = owner().call{value: amount}("");
+        if (!success) revert TransferFailed();
+    }
 
     receive() external payable {}
 }
