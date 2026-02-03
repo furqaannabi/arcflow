@@ -15,7 +15,7 @@ lint_on_build = false
 
 # Network configurations
 [rpc_endpoints]
-sepolia = "https://eth-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY}"
+sepolia = "https://1rpc.io/sepolia"
 arc = "https://rpc.testnet.arc.network"
 
 [etherscan]
