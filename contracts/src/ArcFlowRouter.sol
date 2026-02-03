@@ -2,10 +2,14 @@
 pragma solidity ^0.8.24;
 
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {
+    IUnlockCallback
+} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
-import {Currency} from "v4-core/src/types/Currency.sol";
+import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
+import {BalanceDelta, toBalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {
@@ -14,10 +18,11 @@ import {
 import {ArcFlowHook} from "./ArcFlowHook.sol";
 
 /// @title ArcFlow Router
-/// @notice Helper contract for interacting with ArcFlowHook pools
-contract ArcFlowRouter {
+/// @notice Helper contract for interacting with ArcFlowHook pools via unlock callback
+contract ArcFlowRouter is IUnlockCallback {
     using SafeERC20 for IERC20;
     using PoolIdLibrary for PoolKey;
+    using CurrencyLibrary for Currency;
 
     // ============ State ============
 
@@ -25,6 +30,15 @@ contract ArcFlowRouter {
     ArcFlowHook public immutable hook;
     address public agent;
     address public owner;
+
+    // Callback data struct
+    struct CallbackData {
+        PoolKey key;
+        ModifyLiquidityParams params;
+        bytes hookData;
+        address sender;
+        bool isAdd;
+    }
 
     // ============ Events ============
 
@@ -76,11 +90,6 @@ contract ArcFlowRouter {
 
     // ============ Pool Creation ============
 
-    /// @notice Create a new pool with the ArcFlowHook
-    /// @param token0 First token (must be lower address)
-    /// @param token1 Second token (must be higher address)
-    /// @param fee Pool fee in hundredths of a bip (e.g., 3000 = 0.3%)
-    /// @param sqrtPriceX96 Initial sqrt price
     function createPool(
         address token0,
         address token1,
@@ -105,62 +114,46 @@ contract ArcFlowRouter {
 
     // ============ Liquidity Operations ============
 
-    /// @notice Add liquidity to pool (treasury deposit)
-    /// @param key The pool key
-    /// @param amount0Desired Amount of token0 to add
-    /// @param amount1Desired Amount of token1 to add
-    /// @param tickLower Lower tick bound (-887220 for full range)
-    /// @param tickUpper Upper tick bound (887220 for full range)
     function addLiquidity(
         PoolKey calldata key,
-        uint256 amount0Desired,
-        uint256 amount1Desired,
+        uint256 amount0,
+        uint256 amount1,
         int24 tickLower,
         int24 tickUpper
     ) external returns (uint128 liquidity) {
-        // Transfer tokens from sender
         address token0 = Currency.unwrap(key.currency0);
         address token1 = Currency.unwrap(key.currency1);
 
-        IERC20(token0).safeTransferFrom(
-            msg.sender,
-            address(this),
-            amount0Desired
-        );
-        IERC20(token1).safeTransferFrom(
-            msg.sender,
-            address(this),
-            amount1Desired
-        );
+        // Transfer tokens from sender to this contract
+        IERC20(token0).safeTransferFrom(msg.sender, address(this), amount0);
+        IERC20(token1).safeTransferFrom(msg.sender, address(this), amount1);
 
-        // Approve pool manager
-        IERC20(token0).approve(address(poolManager), amount0Desired);
-        IERC20(token1).approve(address(poolManager), amount1Desired);
-
-        // Calculate liquidity from amounts (simplified - use smaller amount as basis)
-        // For production, use proper LiquidityAmounts library with price
-        liquidity = uint128(
-            amount0Desired < amount1Desired ? amount0Desired : amount1Desired
-        );
-
+        // Calculate liquidity
+        liquidity = uint128(amount0 < amount1 ? amount0 : amount1);
         if (liquidity == 0) revert ZeroLiquidity();
 
-        // Add liquidity - hook will track deposit
-        poolManager.modifyLiquidity(
-            key,
-            ModifyLiquidityParams({
-                tickLower: tickLower,
-                tickUpper: tickUpper,
-                liquidityDelta: int256(uint256(liquidity)),
-                salt: bytes32(0)
-            }),
-            "" // No hookData needed for deposits
-        );
+        // Create params
+        ModifyLiquidityParams memory params = ModifyLiquidityParams({
+            tickLower: tickLower,
+            tickUpper: tickUpper,
+            liquidityDelta: int256(uint256(liquidity)),
+            salt: bytes32(0)
+        });
+
+        // Call through unlock
+        CallbackData memory data = CallbackData({
+            key: key,
+            params: params,
+            hookData: "",
+            sender: msg.sender,
+            isAdd: true
+        });
+
+        poolManager.unlock(abi.encode(data));
 
         emit LiquidityAdded(key.toId(), msg.sender, liquidity);
     }
 
-    /// @notice Add full-range liquidity (simplest option)
     function addFullRangeLiquidity(
         PoolKey calldata key,
         uint256 amount0,
@@ -169,12 +162,6 @@ contract ArcFlowRouter {
         return this.addLiquidity(key, amount0, amount1, -887220, 887220);
     }
 
-    /// @notice Remove liquidity (agent only)
-    /// @param key The pool key
-    /// @param liquidity Amount of liquidity to remove
-    /// @param tickLower Lower tick bound
-    /// @param tickUpper Upper tick bound
-    /// @param recipient Address to receive USDC
     function removeLiquidity(
         PoolKey calldata key,
         uint128 liquidity,
@@ -182,26 +169,95 @@ contract ArcFlowRouter {
         int24 tickUpper,
         address recipient
     ) external onlyAgent {
-        // Encode recipient for hook
-        bytes memory hookData = abi.encode(recipient);
+        ModifyLiquidityParams memory params = ModifyLiquidityParams({
+            tickLower: tickLower,
+            tickUpper: tickUpper,
+            liquidityDelta: -int256(uint256(liquidity)),
+            salt: bytes32(0)
+        });
 
-        poolManager.modifyLiquidity(
-            key,
-            ModifyLiquidityParams({
-                tickLower: tickLower,
-                tickUpper: tickUpper,
-                liquidityDelta: -int256(uint256(liquidity)),
-                salt: bytes32(0)
-            }),
-            hookData
-        );
+        CallbackData memory data = CallbackData({
+            key: key,
+            params: params,
+            hookData: abi.encode(recipient),
+            sender: msg.sender,
+            isAdd: false
+        });
+
+        poolManager.unlock(abi.encode(data));
 
         emit LiquidityRemoved(key.toId(), msg.sender, liquidity);
     }
 
+    // ============ Unlock Callback ============
+
+    function unlockCallback(
+        bytes calldata rawData
+    ) external override returns (bytes memory) {
+        require(msg.sender == address(poolManager), "Only PoolManager");
+
+        CallbackData memory data = abi.decode(rawData, (CallbackData));
+
+        // Perform the liquidity modification
+        (BalanceDelta delta, ) = poolManager.modifyLiquidity(
+            data.key,
+            data.params,
+            data.hookData
+        );
+
+        // Handle delta settlement
+        int128 delta0 = delta.amount0();
+        int128 delta1 = delta.amount1();
+
+        if (data.isAdd) {
+            // Adding liquidity: delta is NEGATIVE (we owe tokens to pool)
+            // We need to sync, transfer tokens, then settle
+            if (delta0 < 0) {
+                uint256 amount = uint256(uint128(-delta0));
+                poolManager.sync(data.key.currency0);
+                IERC20(Currency.unwrap(data.key.currency0)).transfer(
+                    address(poolManager),
+                    amount
+                );
+                poolManager.settle();
+            }
+            if (delta1 < 0) {
+                uint256 amount = uint256(uint128(-delta1));
+                poolManager.sync(data.key.currency1);
+                IERC20(Currency.unwrap(data.key.currency1)).transfer(
+                    address(poolManager),
+                    amount
+                );
+                poolManager.settle();
+            }
+        } else {
+            // Removing liquidity: delta is POSITIVE (pool owes us tokens)
+            // Take the tokens from pool manager and send to recipient
+            address recipient = abi.decode(data.hookData, (address));
+
+            if (delta0 > 0) {
+                uint256 amount = uint256(uint128(delta0));
+                poolManager.take(data.key.currency0, address(this), amount);
+                IERC20(Currency.unwrap(data.key.currency0)).transfer(
+                    recipient,
+                    amount
+                );
+            }
+            if (delta1 > 0) {
+                uint256 amount = uint256(uint128(delta1));
+                poolManager.take(data.key.currency1, address(this), amount);
+                IERC20(Currency.unwrap(data.key.currency1)).transfer(
+                    recipient,
+                    amount
+                );
+            }
+        }
+
+        return "";
+    }
+
     // ============ View Functions ============
 
-    /// @notice Get pool key for token pair
     function getPoolKey(
         address token0,
         address token1,
@@ -217,7 +273,6 @@ contract ArcFlowRouter {
             });
     }
 
-    /// @notice Get pool deposit info from hook
     function getPoolDeposit(
         PoolId poolId
     )
@@ -242,6 +297,6 @@ contract ArcFlowRouter {
         if (fee == 500) return 10;
         if (fee == 3000) return 60;
         if (fee == 10000) return 200;
-        return 60; // Default
+        return 60;
     }
 }

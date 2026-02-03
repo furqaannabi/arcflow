@@ -16,12 +16,11 @@ import {
     ModifyLiquidityParams
 } from "v4-core/src/types/PoolOperation.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {DepositData} from "./structs/ArcFlowHookStructs.sol";
 
 /// @title ArcFlow Payroll Guard Hook
-/// @notice Uniswap v4 hook that tracks deposits and handles withdrawals
+/// @notice Uniswap v4 hook that tracks deposits - router handles token transfers
 contract ArcFlowHook is BaseHook, Ownable {
     using PoolIdLibrary for PoolKey;
 
@@ -32,16 +31,7 @@ contract ArcFlowHook is BaseHook, Ownable {
         uint256 amount0,
         uint256 amount1
     );
-    event WithdrawalExecuted(
-        PoolId indexed poolId,
-        address indexed recipient,
-        uint256 totalUsdc
-    );
-    event TokensSwapped(
-        address indexed tokenIn,
-        uint256 amountIn,
-        uint256 usdcOut
-    );
+    event WithdrawalTracked(PoolId indexed poolId, address indexed recipient);
 
     // ============ Errors ============
     error ZeroAddress();
@@ -102,12 +92,12 @@ contract ArcFlowHook is BaseHook, Ownable {
     ) internal override returns (bytes4, BalanceDelta) {
         if (params.liquidityDelta > 0) {
             PoolId poolId = key.toId();
-            uint256 amt0 = delta.amount0() > 0
-                ? uint256(uint128(delta.amount0()))
-                : 0;
-            uint256 amt1 = delta.amount1() > 0
-                ? uint256(uint128(delta.amount1()))
-                : 0;
+
+            // Delta is negative when adding (we owe pool)
+            int128 d0 = delta.amount0();
+            int128 d1 = delta.amount1();
+            uint256 amt0 = d0 < 0 ? uint256(uint128(-d0)) : 0;
+            uint256 amt1 = d1 < 0 ? uint256(uint128(-d1)) : 0;
 
             poolDeposits[poolId] = DepositData({
                 tokenA: Currency.unwrap(key.currency0),
@@ -126,80 +116,20 @@ contract ArcFlowHook is BaseHook, Ownable {
         address,
         PoolKey calldata key,
         ModifyLiquidityParams calldata,
-        BalanceDelta delta,
+        BalanceDelta,
         BalanceDelta,
         bytes calldata hookData
     ) internal override returns (bytes4, BalanceDelta) {
+        // Just track - router handles token transfers
         address recipient = hookData.length > 0
             ? abi.decode(hookData, (address))
             : msg.sender;
 
-        uint256 totalUsdc = _processWithdrawal(key, delta);
+        PoolId poolId = key.toId();
+        delete poolDeposits[poolId];
 
-        if (totalUsdc > 0) {
-            IERC20(usdc).transfer(recipient, totalUsdc);
-        }
-
-        emit WithdrawalExecuted(key.toId(), recipient, totalUsdc);
+        emit WithdrawalTracked(poolId, recipient);
         return (this.afterRemoveLiquidity.selector, BalanceDelta.wrap(0));
-    }
-
-    // ============ Internal Functions ============
-
-    function _processWithdrawal(
-        PoolKey calldata key,
-        BalanceDelta delta
-    ) internal returns (uint256 totalUsdc) {
-        delete poolDeposits[key.toId()];
-
-        uint256 amt0 = delta.amount0() < 0
-            ? uint256(uint128(-delta.amount0()))
-            : 0;
-        uint256 amt1 = delta.amount1() < 0
-            ? uint256(uint128(-delta.amount1()))
-            : 0;
-
-        address token0 = Currency.unwrap(key.currency0);
-        address token1 = Currency.unwrap(key.currency1);
-
-        if (amt0 > 0) {
-            totalUsdc += (token0 == usdc)
-                ? amt0
-                : _swapToUsdc(key, token0, amt0);
-        }
-        if (amt1 > 0) {
-            totalUsdc += (token1 == usdc)
-                ? amt1
-                : _swapToUsdc(key, token1, amt1);
-        }
-    }
-
-    function _swapToUsdc(
-        PoolKey calldata key,
-        address tokenIn,
-        uint256 amountIn
-    ) internal returns (uint256 usdcOut) {
-        address token0 = Currency.unwrap(key.currency0);
-        bool zeroForOne = (tokenIn == token0);
-
-        BalanceDelta swapDelta = poolManager.swap(
-            key,
-            SwapParams({
-                zeroForOne: zeroForOne,
-                amountSpecified: -int256(amountIn),
-                sqrtPriceLimitX96: zeroForOne
-                    ? 4295128740
-                    : 1461446703485210103287273052203988822378723970341
-            }),
-            ""
-        );
-
-        int128 usdcDelta = zeroForOne
-            ? swapDelta.amount1()
-            : swapDelta.amount0();
-        usdcOut = usdcDelta > 0 ? uint256(uint128(usdcDelta)) : 0;
-
-        emit TokensSwapped(tokenIn, amountIn, usdcOut);
     }
 
     // ============ View Functions ============
