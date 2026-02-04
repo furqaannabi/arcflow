@@ -1,1 +1,0 @@
-# Circle Gateway Service initialization
