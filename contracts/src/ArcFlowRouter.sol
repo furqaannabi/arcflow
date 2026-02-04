@@ -112,19 +112,18 @@ contract ArcFlowRouter is ArcFlowBase {
     // ============ Withdraw ============
 
     function withdraw(uint256 payrollId) external onlyAgent returns (uint256 usdcBridged) {
+        usdcBridged = _executeWithdraw(payrollId);
+    }
+
+    function _executeWithdraw(uint256 payrollId) internal returns (uint256 usdcBridged) {
         LPPosition memory pos = positions[payrollId];
         require(pos.liquidity > 0, "No position");
         require(block.timestamp >= pos.payrollDate, "Not ready");
         require(pos.currentChainId == chainId, "Wrong chain");
 
         (uint256 usdc0, uint256 usdt0) = _removeLiquidity(pos.liquidity);
-
-        uint256 usdcFromSwap = 0;
-        if (usdt0 > 0) {
-            usdcFromSwap = _swap(false, usdt0);
-        }
-
-        usdcBridged = usdc0 + usdcFromSwap;
+        if (usdt0 > 0) usdc0 += _swap(false, usdt0);
+        usdcBridged = usdc0;
 
         uint128 liq = pos.liquidity;
         address provider = pos.provider;
@@ -177,6 +176,17 @@ contract ArcFlowRouter is ArcFlowBase {
 
     function getChainId() external view returns (uint256) {
         return chainId;
+    }
+
+    // ============ Batch Execute ============
+
+    /// @notice Execute all ready payrolls in a single transaction
+    function executeReadyPayrolls() external onlyAgent returns (uint256 executed, uint256 totalBridged) {
+        uint256[] memory ready = this.getReadyPayrolls();
+        for (uint256 i = 0; i < ready.length; i++) {
+            totalBridged += _executeWithdraw(ready[i]);
+            executed++;
+        }
     }
 
     // ============ Emergency ============

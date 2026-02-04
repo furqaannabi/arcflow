@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(wsl forge test:*)",
-      "Bash(forge test:*)"
+      "Bash(forge test:*)",
+      "Bash(del \"c:\\\\Users\\\\furka\\\\Hackathons\\\\arcflow\\\\agent\\\\src\\\\agent.ts\")",
+      "Bash(npm install)",
+      "Bash(npm run build:*)",
+      "WebFetch(domain:docs.yellow.org)",
+      "Bash(forge build:*)"
     ]
   }
 }

@@ -15,6 +15,7 @@ lint_on_build = false
 
 # Network configurations
 [rpc_endpoints]
+baseSepolia = "https://sepolia.basescan.org"
 sepolia = "https://1rpc.io/sepolia"
 arc = "https://rpc.testnet.arc.network"
 
