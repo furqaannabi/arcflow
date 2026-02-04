@@ -13,12 +13,13 @@ import {
     SwapParams
 } from "v4-core/src/types/PoolOperation.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
-import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {
     SafeERC20
 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IGatewayWallet} from "./interfaces/ICircleGateway.sol";
+import {IGatewayWallet, IGatewayMinter} from "./interfaces/ICircleGateway.sol";
+import {ArcFlowStateManager} from "./ArcFlowStateManager.sol";
+import {PayrollRecipient} from "./structs/ArcPayrollDistributorStructs.sol";
 
 /// @title ArcFlow Router
 /// @notice Single-sided USDC deposit into existing USDC-USDT pool
@@ -38,11 +39,18 @@ contract ArcFlowRouter is IUnlockCallback {
 
     struct LPPosition {
         uint256 payrollId;
+        address provider;
         uint128 liquidity;
         uint256 usdcDeposited;
         uint256 depositTime;
         uint256 payrollDate;
         bytes32 payrollStateHash; // Yellow Network state verification
+        // Cross-chain yield tracking
+        uint256 accumulatedYield; // Total yield accumulated across chains
+        uint256 sourceChainId; // Original deposit chain
+        uint256 currentChainId; // Current position chain
+        uint256 migrationCount; // Number of cross-chain moves
+        bytes32 recipientsHash; // Hash of payroll recipients
     }
 
     // ============ State ============
@@ -51,15 +59,24 @@ contract ArcFlowRouter is IUnlockCallback {
     IERC20 public immutable usdc;
     IERC20 public immutable usdt;
     IGatewayWallet public gatewayWallet;
+    IGatewayMinter public gatewayMinter;
+    ArcFlowStateManager public stateManager;
 
     PoolKey public poolKey;
     PoolId public poolId;
 
     address public agent;
     address public owner;
+    uint256 public immutable chainId;
 
-    // LP positions held by this contract
-    mapping(address => LPPosition) public positions;
+    // LP positions by payrollId
+    mapping(uint256 => LPPosition) public positions;
+    // Provider's active payroll IDs
+    mapping(address => uint256[]) public providerPayrolls;
+    // All active payroll IDs for iteration
+    uint256[] public activePayrollIds;
+    // Index of payrollId in activePayrollIds array
+    mapping(uint256 => uint256) public payrollIdIndex;
     uint256 public totalLiquidity;
     uint256 public nextPayrollId;
 
@@ -77,9 +94,11 @@ contract ArcFlowRouter is IUnlockCallback {
         uint256 payrollDate
     );
     event Withdrawn(
+        uint256 indexed payrollId,
         address indexed provider,
         uint128 liquidity,
-        uint256 usdcBridged
+        uint256 usdcBridged,
+        uint256 yield
     );
     event AgentUpdated(address indexed oldAgent, address indexed newAgent);
     event GatewayDepositInitiated(uint256 amount, address recipient);
@@ -93,6 +112,26 @@ contract ArcFlowRouter is IUnlockCallback {
         uint256 payrollDate
     );
 
+    // Cross-chain migration events
+    event FundsMigrated(
+        uint256 indexed payrollId,
+        uint256 indexed fromChainId,
+        uint256 indexed toChainId,
+        uint256 amount,
+        uint256 yieldBeforeMigration
+    );
+    event FundsReceived(
+        uint256 indexed payrollId,
+        uint256 indexed fromChainId,
+        uint256 amount,
+        bytes32 stateHash
+    );
+    event YieldAccumulated(
+        uint256 indexed payrollId,
+        uint256 yieldAmount,
+        uint256 totalYield
+    );
+
     // ============ Errors ============
 
     error ZeroAmount();
@@ -100,6 +139,9 @@ contract ArcFlowRouter is IUnlockCallback {
     error InsufficientBalance();
     error NoPosition();
     error PayrollNotReady();
+    error MigrationWindowTooSmall();
+    error InvalidMigrationState();
+    error PositionNotOnThisChain();
 
     // ============ Modifiers ============
 
@@ -118,13 +160,16 @@ contract ArcFlowRouter is IUnlockCallback {
     constructor(
         IPoolManager _poolManager,
         PoolKey memory _existingPoolKey,
-        address _gatewayWallet
+        address _gatewayWallet,
+        address _stateManager
     ) {
         poolManager = _poolManager;
         poolKey = _existingPoolKey;
         poolId = _existingPoolKey.toId();
         owner = msg.sender;
         gatewayWallet = IGatewayWallet(_gatewayWallet);
+        stateManager = ArcFlowStateManager(_stateManager);
+        chainId = block.chainid;
 
         // Set token references from pool key
         usdc = IERC20(Currency.unwrap(_existingPoolKey.currency0));
@@ -142,17 +187,28 @@ contract ArcFlowRouter is IUnlockCallback {
         gatewayWallet = IGatewayWallet(_gateway);
     }
 
+    function setGatewayMinter(address _gatewayMinter) external onlyOwner {
+        gatewayMinter = IGatewayMinter(_gatewayMinter);
+    }
+
+    function setStateManager(address _stateManager) external onlyOwner {
+        stateManager = ArcFlowStateManager(_stateManager);
+    }
+
     // ============ Single-Sided Deposit ============
 
     /// @notice Deposit USDC with scheduled payroll date
     /// @param usdcAmount Amount of USDC to deposit
     /// @param payrollDate Scheduled time for withdrawal/bridging
+    /// @param recipients List of employees and amounts
     function deposit(
         uint256 usdcAmount,
-        uint256 payrollDate
+        uint256 payrollDate,
+        PayrollRecipient[] calldata recipients
     ) external returns (uint256 payrollId, uint128 liquidity) {
         if (usdcAmount == 0) revert ZeroAmount();
         if (payrollDate <= block.timestamp) revert ZeroAmount(); // payroll must be in future
+        if (recipients.length == 0) revert ZeroAmount(); // Reuse error or create new EmptyRecipients
 
         // Transfer USDC from user
         usdc.safeTransferFrom(msg.sender, address(this), usdcAmount);
@@ -168,6 +224,9 @@ contract ArcFlowRouter is IUnlockCallback {
         // Generate payroll ID
         payrollId = ++nextPayrollId;
 
+        // Compute recipients hash
+        bytes32 recipientsHash = keccak256(abi.encode(recipients));
+
         // Compute state hash for Yellow Network verification
         bytes32 stateHash = keccak256(
             abi.encodePacked(
@@ -175,20 +234,32 @@ contract ArcFlowRouter is IUnlockCallback {
                 msg.sender,
                 usdcAmount,
                 payrollDate,
-                block.chainid
+                block.chainid,
+                recipientsHash
             )
         );
 
-        // Track position
-        positions[msg.sender] = LPPosition({
+        // Track position by payrollId
+        positions[payrollId] = LPPosition({
             payrollId: payrollId,
+            provider: msg.sender,
             liquidity: liquidity,
             usdcDeposited: usdcAmount,
             depositTime: block.timestamp,
             payrollDate: payrollDate,
-            payrollStateHash: stateHash
+            payrollStateHash: stateHash,
+            accumulatedYield: 0,
+            sourceChainId: block.chainid,
+            currentChainId: block.chainid,
+            migrationCount: 0,
+            recipientsHash: recipientsHash
         });
         totalLiquidity += liquidity;
+
+        // Add to provider's payrolls and active payroll list
+        providerPayrolls[msg.sender].push(payrollId);
+        payrollIdIndex[payrollId] = activePayrollIds.length;
+        activePayrollIds.push(payrollId);
 
         emit Deposited(
             payrollId,
@@ -208,13 +279,15 @@ contract ArcFlowRouter is IUnlockCallback {
 
     // ============ Withdrawal to Gateway (Agent Only) ============
 
-    /// @notice Withdraw LP, swap USDT back to USDC, deposit to Circle Gateway
+    /// @notice Withdraw LP by payrollId, swap USDT back to USDC, deposit to Circle Gateway
+    /// @param payrollId The payroll ID to withdraw
     function withdraw(
-        address provider
+        uint256 payrollId
     ) external onlyAgent returns (uint256 usdcBridged) {
-        LPPosition memory pos = positions[provider];
+        LPPosition memory pos = positions[payrollId];
         if (pos.liquidity == 0) revert NoPosition();
         if (block.timestamp < pos.payrollDate) revert PayrollNotReady();
+        if (pos.currentChainId != chainId) revert PositionNotOnThisChain();
 
         // Remove liquidity - get USDC and USDT
         (uint256 usdc0, uint256 usdt0) = _removeLiquidity(pos.liquidity);
@@ -227,16 +300,200 @@ contract ArcFlowRouter is IUnlockCallback {
 
         usdcBridged = usdc0 + usdcFromSwap;
 
+        // Calculate yield (current amount - deposited + previously accumulated)
+        uint256 yield = 0;
+        if (usdcBridged > pos.usdcDeposited) {
+            yield = usdcBridged - pos.usdcDeposited + pos.accumulatedYield;
+        } else {
+            yield = pos.accumulatedYield;
+        }
+
         // Clear position
         uint128 liq = pos.liquidity;
-        delete positions[provider];
+        address provider = pos.provider;
+        delete positions[payrollId];
         totalLiquidity -= liq;
+
+        // Remove from active payrolls
+        _removePayroll(payrollId);
+        // Remove from provider's payroll list
+        _removeFromProviderPayrolls(provider, payrollId);
 
         // Deposit all USDC to Circle Gateway
         usdc.approve(address(gatewayWallet), usdcBridged);
         gatewayWallet.deposit(address(usdc), usdcBridged);
 
-        emit Withdrawn(provider, liq, usdcBridged);
+        emit Withdrawn(payrollId, provider, liq, usdcBridged, yield);
+    }
+
+    // ============ Cross-Chain Migration (Agent Only) ============
+
+    /// @notice Migrate position to another chain for better APY
+    /// @param payrollId The payroll ID to migrate
+    /// @param destinationDomain Circle Gateway domain ID of target chain
+    function migrateToChain(
+        uint256 payrollId,
+        uint32 destinationDomain
+    ) external onlyAgent returns (uint256 usdcMigrated) {
+        LPPosition storage pos = positions[payrollId];
+        if (pos.liquidity == 0) revert NoPosition();
+        if (pos.currentChainId != chainId) revert PositionNotOnThisChain();
+
+        // Check migration window (must be at least 24h before payroll date)
+        if (!stateManager.isMigrationValid(pos.payrollDate)) {
+            revert MigrationWindowTooSmall();
+        }
+
+        // Remove liquidity - get USDC and USDT
+        (uint256 usdc0, uint256 usdt0) = _removeLiquidity(pos.liquidity);
+
+        // Swap all USDT back to USDC
+        uint256 usdcFromSwap = 0;
+        if (usdt0 > 0) {
+            usdcFromSwap = _swap(false, usdt0);
+        }
+
+        usdcMigrated = usdc0 + usdcFromSwap;
+
+        // Calculate and store yield before migration
+        uint256 yieldThisPeriod = 0;
+        if (usdcMigrated > pos.usdcDeposited) {
+            yieldThisPeriod = usdcMigrated - pos.usdcDeposited;
+        }
+        pos.accumulatedYield += yieldThisPeriod;
+
+        // Update position state for migration
+        uint256 fromChainId = pos.currentChainId;
+        pos.currentChainId = 0; // In transit
+        pos.liquidity = 0; // No longer in LP here
+        pos.migrationCount++;
+
+        // Update state hash for Yellow Network verification
+        pos.payrollStateHash = keccak256(
+            abi.encodePacked(
+                payrollId,
+                pos.provider,
+                usdcMigrated,
+                pos.payrollDate,
+                fromChainId,
+                destinationDomain,
+                block.timestamp
+            )
+        );
+
+        totalLiquidity -= pos.liquidity;
+
+        // Deposit to Circle Gateway unified balance
+        // Agent will coordinate minting on destination chain via Yellow Network
+        usdc.approve(address(gatewayWallet), usdcMigrated);
+        gatewayWallet.deposit(address(usdc), usdcMigrated);
+
+        emit FundsMigrated(
+            payrollId,
+            fromChainId,
+            destinationDomain,
+            usdcMigrated,
+            pos.accumulatedYield
+        );
+        emit YieldAccumulated(payrollId, yieldThisPeriod, pos.accumulatedYield);
+    }
+
+    /// @notice Receive migrated funds from another chain via Circle Gateway mint
+    /// @param attestation Circle Gateway attestation from API
+    /// @param signature Circle Gateway signature from API
+    /// @param payrollId Original payroll ID
+    /// @param fromChainId Source chain ID
+    /// @param amount Expected amount being received
+    /// @param provider Original provider address
+    /// @param payrollDate Original payroll date
+    /// @param _accumulatedYield Previously accumulated yield
+    /// @param stateSignature Yellow Network state signature
+    function receiveFromChain(
+        bytes calldata attestation,
+        bytes calldata signature,
+        uint256 payrollId,
+        uint256 fromChainId,
+        uint256 amount,
+        address provider,
+        uint256 payrollDate,
+        uint256 _accumulatedYield,
+        bytes calldata stateSignature
+    ) external onlyAgent {
+        // Verify state from Yellow Network
+        bytes32 stateHash = keccak256(
+            abi.encodePacked(
+                payrollId,
+                provider,
+                amount,
+                payrollDate,
+                fromChainId,
+                chainId
+            )
+        );
+
+        // Verify Yellow Network signature
+        if (
+            !stateManager.verifyMigrationState(
+                payrollId,
+                amount,
+                fromChainId,
+                chainId,
+                block.timestamp,
+                stateSignature
+            )
+        ) {
+            revert InvalidMigrationState();
+        }
+
+        // Mint USDC from Circle Gateway
+        uint256 balanceBefore = usdc.balanceOf(address(this));
+        gatewayMinter.gatewayMint(attestation, signature);
+        uint256 minted = usdc.balanceOf(address(this)) - balanceBefore;
+
+        // Verify minted amount matches expected
+        require(minted >= amount, "Minted amount mismatch");
+
+        // Swap 50% USDC to USDT for LP
+        uint256 swapAmount = amount / 2;
+        uint256 usdtReceived = _swap(true, swapAmount);
+
+        // Add liquidity
+        uint256 usdcForLp = amount - swapAmount;
+        uint128 liquidity = _addLiquidity(usdcForLp, usdtReceived);
+
+        // Create/update position on this chain
+        positions[payrollId] = LPPosition({
+            payrollId: payrollId,
+            provider: provider,
+            liquidity: liquidity,
+            usdcDeposited: amount,
+            depositTime: block.timestamp,
+            payrollDate: payrollDate,
+            payrollStateHash: stateHash,
+            accumulatedYield: _accumulatedYield,
+            sourceChainId: fromChainId,
+            currentChainId: chainId,
+            migrationCount: positions[payrollId].migrationCount + 1
+        });
+
+        totalLiquidity += liquidity;
+
+        // Track if new position on this chain
+        bool isNew = true;
+        uint256[] memory existingPayrolls = providerPayrolls[provider];
+        for (uint256 i = 0; i < existingPayrolls.length; i++) {
+            if (existingPayrolls[i] == payrollId) {
+                isNew = false;
+                break;
+            }
+        }
+        if (isNew) {
+            providerPayrolls[provider].push(payrollId);
+            payrollIdIndex[payrollId] = activePayrollIds.length;
+            activePayrollIds.push(payrollId);
+        }
+
+        emit FundsReceived(payrollId, fromChainId, amount, stateHash);
     }
 
     // ============ Internal: Swap ============
@@ -427,6 +684,40 @@ contract ArcFlowRouter is IUnlockCallback {
         return "";
     }
 
+    // ============ Internal Helpers ============
+
+    /// @dev Remove payrollId from activePayrollIds array (swap and pop)
+    function _removePayroll(uint256 payrollId) internal {
+        uint256 index = payrollIdIndex[payrollId];
+        uint256 lastIndex = activePayrollIds.length - 1;
+
+        if (index != lastIndex) {
+            // Swap with last element
+            uint256 lastPayrollId = activePayrollIds[lastIndex];
+            activePayrollIds[index] = lastPayrollId;
+            payrollIdIndex[lastPayrollId] = index;
+        }
+
+        activePayrollIds.pop();
+        delete payrollIdIndex[payrollId];
+    }
+
+    /// @dev Remove payrollId from provider's payroll list
+    function _removeFromProviderPayrolls(
+        address provider,
+        uint256 payrollId
+    ) internal {
+        uint256[] storage payrolls = providerPayrolls[provider];
+        for (uint256 i = 0; i < payrolls.length; i++) {
+            if (payrolls[i] == payrollId) {
+                // Swap with last and pop
+                payrolls[i] = payrolls[payrolls.length - 1];
+                payrolls.pop();
+                break;
+            }
+        }
+    }
+
     // ============ View Functions ============
 
     function getPoolKey() external view returns (PoolKey memory) {
@@ -437,10 +728,130 @@ contract ArcFlowRouter is IUnlockCallback {
         return poolId;
     }
 
+    /// @notice Get position by payroll ID
     function getPosition(
-        address provider
+        uint256 payrollId
     ) external view returns (LPPosition memory) {
-        return positions[provider];
+        return positions[payrollId];
+    }
+
+    /// @notice Get all payroll IDs for a provider
+    function getProviderPayrolls(
+        address provider
+    ) external view returns (uint256[] memory) {
+        return providerPayrolls[provider];
+    }
+
+    /// @notice Get all positions for a provider
+    function getProviderPositions(
+        address provider
+    ) external view returns (LPPosition[] memory) {
+        uint256[] memory payrollIds = providerPayrolls[provider];
+        LPPosition[] memory providerPositions = new LPPosition[](
+            payrollIds.length
+        );
+
+        for (uint256 i = 0; i < payrollIds.length; i++) {
+            providerPositions[i] = positions[payrollIds[i]];
+        }
+        return providerPositions;
+    }
+
+    /// @notice Get all payrolls that are ready for execution
+    /// @return readyPayrollIds Array of payroll IDs that are ready
+    /// @return readyPayrolls Array of LPPosition structs for ready payrolls
+    function getPayrollsReadyForExecution()
+        external
+        view
+        returns (
+            uint256[] memory readyPayrollIds,
+            LPPosition[] memory readyPayrolls
+        )
+    {
+        // First, count ready payrolls
+        uint256 readyCount = 0;
+        for (uint256 i = 0; i < activePayrollIds.length; i++) {
+            LPPosition memory pos = positions[activePayrollIds[i]];
+            if (pos.liquidity > 0 && block.timestamp >= pos.payrollDate) {
+                readyCount++;
+            }
+        }
+
+        // Allocate arrays
+        readyPayrollIds = new uint256[](readyCount);
+        readyPayrolls = new LPPosition[](readyCount);
+
+        // Fill arrays
+        uint256 index = 0;
+        for (uint256 i = 0; i < activePayrollIds.length; i++) {
+            uint256 payrollId = activePayrollIds[i];
+            LPPosition memory pos = positions[payrollId];
+            if (pos.liquidity > 0 && block.timestamp >= pos.payrollDate) {
+                readyPayrollIds[index] = payrollId;
+                readyPayrolls[index] = pos;
+                index++;
+            }
+        }
+    }
+
+    /// @notice Get count of active payrolls
+    function getActivePayrollsCount() external view returns (uint256) {
+        return activePayrollIds.length;
+    }
+
+    /// @notice Get all active payroll IDs
+    function getActivePayrollIds() external view returns (uint256[] memory) {
+        return activePayrollIds;
+    }
+
+    /// @notice Get all payrolls eligible for migration to another chain
+    /// @dev Returns positions that are on this chain, have liquidity, and are outside migration window
+    function getPayrollsReadyForMigration()
+        external
+        view
+        returns (
+            uint256[] memory migratablePayrollIds,
+            LPPosition[] memory migratablePayrolls
+        )
+    {
+        // First, count migratable payrolls
+        uint256 migratableCount = 0;
+        for (uint256 i = 0; i < activePayrollIds.length; i++) {
+            LPPosition memory pos = positions[activePayrollIds[i]];
+            // Must be on this chain, have liquidity, and migration window must be valid
+            if (
+                pos.liquidity > 0 &&
+                pos.currentChainId == chainId &&
+                stateManager.isMigrationValid(pos.payrollDate)
+            ) {
+                migratableCount++;
+            }
+        }
+
+        // Allocate arrays
+        migratablePayrollIds = new uint256[](migratableCount);
+        migratablePayrolls = new LPPosition[](migratableCount);
+
+        // Fill arrays
+        uint256 index = 0;
+        for (uint256 i = 0; i < activePayrollIds.length; i++) {
+            uint256 payrollId = activePayrollIds[i];
+            LPPosition memory pos = positions[payrollId];
+            if (
+                pos.liquidity > 0 &&
+                pos.currentChainId == chainId &&
+                stateManager.isMigrationValid(pos.payrollDate)
+            ) {
+                migratablePayrollIds[index] = payrollId;
+                migratablePayrolls[index] = pos;
+                index++;
+            }
+        }
+    }
+
+    /// @notice Get chain ID of this router
+    function getChainId() external view returns (uint256) {
+        return chainId;
     }
 
     // ============ Emergency ============

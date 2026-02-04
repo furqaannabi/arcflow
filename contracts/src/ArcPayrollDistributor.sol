@@ -91,8 +91,11 @@ contract ArcPayrollDistributor is ReentrancyGuard, Ownable {
         address provider,
         uint256 amount,
         uint256 payrollDate,
+        PayrollRecipient[] calldata recipients,
         bytes calldata stateSignature
     ) public view returns (bytes32 stateHash) {
+        bytes32 recipientsHash = keccak256(abi.encode(recipients));
+
         // Compute expected state hash (must match Ethereum router)
         stateHash = keccak256(
             abi.encodePacked(
@@ -100,7 +103,8 @@ contract ArcPayrollDistributor is ReentrancyGuard, Ownable {
                 provider,
                 amount,
                 payrollDate,
-                ETH_CHAIN_ID
+                ETH_CHAIN_ID,
+                recipientsHash
             )
         );
 
@@ -137,11 +141,13 @@ contract ArcPayrollDistributor is ReentrancyGuard, Ownable {
         if (recipients.length == 0) revert EmptyRecipients();
 
         // Step 1: Verify Yellow Network state
+        // Step 1: Verify Yellow Network state
         bytes32 stateHash = verifyPayrollState(
             payrollId,
             provider,
             totalAmount,
             payrollDate,
+            recipients,
             stateSignature
         );
 

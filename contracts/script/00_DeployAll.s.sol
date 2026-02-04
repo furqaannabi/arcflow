@@ -8,8 +8,9 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 
 import {ArcFlowRouter} from "../src/ArcFlowRouter.sol";
+import {ArcFlowStateManager} from "../src/ArcFlowStateManager.sol";
 
-/// @notice Deploys ArcFlowRouter using existing USDC-USDT pool
+/// @notice Deploys ArcFlowRouter and ArcFlowStateManager using existing USDC-USDT pool
 contract DeployAllScript is Script {
     // Sepolia addresses
     address constant SEPOLIA_POOL_MANAGER =
@@ -19,12 +20,15 @@ contract DeployAllScript is Script {
     address constant GATEWAY_WALLET =
         0x0022222ABE238Cc2C7Bb1f21003F0a260052475B;
 
+    // Circle Gateway domains
+    uint32 constant SEPOLIA_CIRCLE_DOMAIN = 0; // Ethereum testnet
+
     function run() public {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
         address agentAddress = vm.envOr("AGENT_ADDRESS", deployer);
 
-        console.log("=== ArcFlow Router Deployment ===");
+        console.log("=== ArcFlow Multi-Chain Deployment ===");
         console.log("Deployer:", deployer);
         console.log("Agent:", agentAddress);
 
@@ -47,22 +51,43 @@ contract DeployAllScript is Script {
 
         vm.startBroadcast(deployerPrivateKey);
 
-        // Deploy router with existing pool key
+        // 1. Deploy StateManager first
+        ArcFlowStateManager stateManager = new ArcFlowStateManager();
+        console.log("ArcFlowStateManager deployed at:", address(stateManager));
+
+        // 2. Deploy router with stateManager
         ArcFlowRouter router = new ArcFlowRouter(
             IPoolManager(SEPOLIA_POOL_MANAGER),
             poolKey,
-            GATEWAY_WALLET
+            GATEWAY_WALLET,
+            address(stateManager)
         );
         console.log("ArcFlowRouter deployed at:", address(router));
 
-        // Set agent
+        // 3. Configure StateManager
+        stateManager.setAgentAuthorization(agentAddress, true);
+        console.log("Agent authorized in StateManager");
+
+        // Configure this chain
+        stateManager.configureChain(
+            block.chainid,
+            SEPOLIA_CIRCLE_DOMAIN,
+            address(router),
+            address(0), // LP pool - not needed for basic config
+            true
+        );
+        console.log("Chain configured:", block.chainid);
+
+        // 4. Set agent in router
         router.setAgent(agentAddress);
-        console.log("Agent set to:", agentAddress);
+        console.log("Agent set in Router:", agentAddress);
 
         vm.stopBroadcast();
 
         console.log("");
         console.log("=== Deployment Complete ===");
+        console.log("StateManager:", address(stateManager));
         console.log("Router:", address(router));
+        console.log("Chain ID:", block.chainid);
     }
 }
