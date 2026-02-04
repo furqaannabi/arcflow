@@ -6,11 +6,12 @@ import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 
 import {ArcFlowRouter} from "../src/ArcFlowRouter.sol";
 import {ArcFlowStateManager} from "../src/ArcFlowStateManager.sol";
 
-/// @notice Deploys ArcFlowRouter and ArcFlowStateManager using existing USDC-USDT pool
+/// @notice Deploys ArcFlowRouter and ArcFlowStateManager, initializing pool if needed
 contract DeployAllScript is Script {
     // Sepolia addresses
     address constant SEPOLIA_POOL_MANAGER =
@@ -23,6 +24,9 @@ contract DeployAllScript is Script {
     // Circle Gateway domains
     uint32 constant SEPOLIA_CIRCLE_DOMAIN = 0; // Ethereum testnet
 
+    // 1:1 price for stablecoin pair
+    uint160 constant SQRT_PRICE_1_1 = 79228162514264337593543950336;
+
     function run() public {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
@@ -32,7 +36,7 @@ contract DeployAllScript is Script {
         console.log("Deployer:", deployer);
         console.log("Agent:", agentAddress);
 
-        // Create pool key for existing USDC-USDT pool (no hooks)
+        // Create pool key for USDC-USDT pool (no hooks)
         (address token0, address token1) = SEPOLIA_USDC < SEPOLIA_USDT
             ? (SEPOLIA_USDC, SEPOLIA_USDT)
             : (SEPOLIA_USDT, SEPOLIA_USDC);
@@ -51,20 +55,28 @@ contract DeployAllScript is Script {
 
         vm.startBroadcast(deployerPrivateKey);
 
-        // 1. Deploy StateManager first
+        // 1. Initialize the pool if it doesn't exist
+        IPoolManager poolManager = IPoolManager(SEPOLIA_POOL_MANAGER);
+        try poolManager.initialize(poolKey, SQRT_PRICE_1_1) returns (int24 tick) {
+            console.log("Pool initialized at tick:", tick);
+        } catch {
+            console.log("Pool already initialized or initialization failed - continuing");
+        }
+
+        // 2. Deploy StateManager
         ArcFlowStateManager stateManager = new ArcFlowStateManager();
         console.log("ArcFlowStateManager deployed at:", address(stateManager));
 
-        // 2. Deploy router with stateManager
+        // 3. Deploy router with stateManager
         ArcFlowRouter router = new ArcFlowRouter(
-            IPoolManager(SEPOLIA_POOL_MANAGER),
+            poolManager,
             poolKey,
             GATEWAY_WALLET,
             address(stateManager)
         );
         console.log("ArcFlowRouter deployed at:", address(router));
 
-        // 3. Configure StateManager
+        // 4. Configure StateManager
         stateManager.setAgentAuthorization(agentAddress, true);
         console.log("Agent authorized in StateManager");
 
@@ -78,7 +90,7 @@ contract DeployAllScript is Script {
         );
         console.log("Chain configured:", block.chainid);
 
-        // 4. Set agent in router
+        // 5. Set agent in router
         router.setAgent(agentAddress);
         console.log("Agent set in Router:", agentAddress);
 

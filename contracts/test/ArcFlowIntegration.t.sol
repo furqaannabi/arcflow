@@ -13,9 +13,8 @@ import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 
 import {ArcFlowRouter} from "../src/ArcFlowRouter.sol";
 import {ArcFlowStateManager} from "../src/ArcFlowStateManager.sol";
-import {
-    PayrollRecipient
-} from "../src/structs/ArcPayrollDistributorStructs.sol";
+import {LPPosition} from "../src/ArcFlowTypes.sol";
+import {PayrollRecipient} from "../src/structs/ArcPayrollDistributorStructs.sol";
 
 /// @notice Mock Gateway Wallet for testing
 contract MockGatewayWallet {
@@ -208,7 +207,7 @@ contract ArcFlowIntegrationTest is Test, Deployers {
         assertTrue(liquidity > 0, "Should receive liquidity");
 
         // Check position using getPosition
-        ArcFlowRouter.LPPosition memory pos = router.getPosition(payrollId);
+        LPPosition memory pos = router.getPosition(payrollId);
         assertEq(pos.payrollId, payrollId, "Payroll ID should match");
         assertEq(pos.liquidity, liquidity, "Liquidity should match");
         assertEq(pos.provider, employer, "Provider should be employer");
@@ -316,7 +315,7 @@ contract ArcFlowIntegrationTest is Test, Deployers {
         // Nothing ready yet
         (
             uint256[] memory readyIds,
-            ArcFlowRouter.LPPosition[] memory readyPositions
+            LPPosition[] memory readyPositions
         ) = router.getPayrollsReadyForExecution();
         assertEq(readyIds.length, 0, "No payrolls ready initially");
 
@@ -353,7 +352,7 @@ contract ArcFlowIntegrationTest is Test, Deployers {
 
         (
             uint256[] memory migratableIds,
-            ArcFlowRouter.LPPosition[] memory migratablePositions
+            LPPosition[] memory migratablePositions
         ) = router.getPayrollsReadyForMigration();
 
         assertEq(migratableIds.length, 1, "Should have one migratable payroll");
@@ -444,7 +443,7 @@ contract ArcFlowIntegrationTest is Test, Deployers {
         assertEq(providerPayrollIds.length, 3, "Should have 3 payrolls");
 
         // Check positions
-        ArcFlowRouter.LPPosition[] memory positions = router
+        LPPosition[] memory positions = router
             .getProviderPositions(employer);
         assertEq(positions.length, 3, "Should have 3 positions");
         assertEq(positions[0].usdcDeposited, 3_000e6);
