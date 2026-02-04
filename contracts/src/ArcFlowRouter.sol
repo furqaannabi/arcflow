@@ -407,6 +407,7 @@ contract ArcFlowRouter is IUnlockCallback {
     /// @param provider Original provider address
     /// @param payrollDate Original payroll date
     /// @param _accumulatedYield Previously accumulated yield
+    /// @param recipientsHash Recipients hash
     /// @param stateSignature Yellow Network state signature
     function receiveFromChain(
         bytes calldata attestation,
@@ -417,6 +418,7 @@ contract ArcFlowRouter is IUnlockCallback {
         address provider,
         uint256 payrollDate,
         uint256 _accumulatedYield,
+        bytes32 recipientsHash,
         bytes calldata stateSignature
     ) external onlyAgent {
         // Verify state from Yellow Network
@@ -473,7 +475,8 @@ contract ArcFlowRouter is IUnlockCallback {
             accumulatedYield: _accumulatedYield,
             sourceChainId: fromChainId,
             currentChainId: chainId,
-            migrationCount: positions[payrollId].migrationCount + 1
+            migrationCount: positions[payrollId].migrationCount + 1,
+            recipientsHash: recipientsHash
         });
 
         totalLiquidity += liquidity;
@@ -662,20 +665,30 @@ contract ArcFlowRouter is IUnlockCallback {
 
             if (zeroForOne) {
                 // Paid USDC, received USDT
-                poolManager.sync(poolKey.currency0);
-                usdc.transfer(address(poolManager), amountIn);
-                poolManager.settle();
-
-                amountOut = uint256(uint128(delta.amount1()));
-                poolManager.take(poolKey.currency1, address(this), amountOut);
+                // Use actual delta values, not requested amountIn
+                if (delta.amount0() < 0) {
+                    uint256 amt = uint256(uint128(-delta.amount0()));
+                    poolManager.sync(poolKey.currency0);
+                    usdc.transfer(address(poolManager), amt);
+                    poolManager.settle();
+                }
+                if (delta.amount1() > 0) {
+                    amountOut = uint256(uint128(delta.amount1()));
+                    poolManager.take(poolKey.currency1, address(this), amountOut);
+                }
             } else {
                 // Paid USDT, received USDC
-                poolManager.sync(poolKey.currency1);
-                usdt.transfer(address(poolManager), amountIn);
-                poolManager.settle();
-
-                amountOut = uint256(uint128(delta.amount0()));
-                poolManager.take(poolKey.currency0, address(this), amountOut);
+                // Use actual delta values, not requested amountIn
+                if (delta.amount1() < 0) {
+                    uint256 amt = uint256(uint128(-delta.amount1()));
+                    poolManager.sync(poolKey.currency1);
+                    usdt.transfer(address(poolManager), amt);
+                    poolManager.settle();
+                }
+                if (delta.amount0() > 0) {
+                    amountOut = uint256(uint128(delta.amount0()));
+                    poolManager.take(poolKey.currency0, address(this), amountOut);
+                }
             }
 
             return abi.encode(amountOut);

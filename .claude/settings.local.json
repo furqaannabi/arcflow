@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wsl forge test:*)",
+      "Bash(forge test:*)"
+    ]
+  }
+}

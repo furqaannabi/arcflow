@@ -8,6 +8,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 
 import {ArcFlowRouter} from "../src/ArcFlowRouter.sol";
@@ -112,6 +113,9 @@ contract ArcFlowIntegrationTest is Test, Deployers {
         // Initialize pool at 1:1 price
         manager.initialize(poolKey, SQRT_PRICE_1_1);
 
+        // Add initial liquidity to the pool
+        _addInitialLiquidity(token0, token1);
+
         // Deploy router with stateManager
         router = new ArcFlowRouter(
             manager,
@@ -147,6 +151,32 @@ contract ArcFlowIntegrationTest is Test, Deployers {
         console.log("StateManager:", address(stateManager));
         console.log("USDC:", address(usdc));
         console.log("USDT:", address(usdt));
+    }
+
+    /// @dev Add initial liquidity to enable swaps in the pool
+    function _addInitialLiquidity(address token0, address token1) internal {
+        uint256 liquidityAmount = 100_000_000e6; // 100M tokens each
+
+        // Mint tokens to this contract for providing liquidity
+        MockERC20(token0).mint(address(this), liquidityAmount);
+        MockERC20(token1).mint(address(this), liquidityAmount);
+
+        // Approve the modifyLiquidityRouter
+        MockERC20(token0).approve(address(modifyLiquidityRouter), type(uint256).max);
+        MockERC20(token1).approve(address(modifyLiquidityRouter), type(uint256).max);
+
+        // Add liquidity using full range ticks (-887220 to 887220)
+        // These are the same tick bounds used in ArcFlowRouter
+        modifyLiquidityRouter.modifyLiquidity(
+            poolKey,
+            ModifyLiquidityParams({
+                tickLower: -887220,
+                tickUpper: 887220,
+                liquidityDelta: int256(liquidityAmount),
+                salt: bytes32(0)
+            }),
+            ""
+        );
     }
 
     /// @notice Test: Deposit USDC → Get payroll ID and liquidity
@@ -280,11 +310,7 @@ contract ArcFlowIntegrationTest is Test, Deployers {
             payrollDate1,
             recipients
         );
-        (uint256 payrollId2, ) = router.deposit(
-            5_000e6,
-            payrollDate2,
-            recipients
-        );
+        router.deposit(5_000e6, payrollDate2, recipients);
         vm.stopPrank();
 
         // Nothing ready yet
@@ -361,7 +387,7 @@ contract ArcFlowIntegrationTest is Test, Deployers {
         // Try to migrate - should fail due to small window
         vm.prank(agent);
         vm.expectRevert(ArcFlowRouter.MigrationWindowTooSmall.selector);
-        router.migrateToChain(payrollId, 1, address(0x123));
+        router.migrateToChain(payrollId, 1);
     }
 
     /// @notice Test: State manager APY tracking
@@ -406,9 +432,9 @@ contract ArcFlowIntegrationTest is Test, Deployers {
             amount: 5_000e6
         });
 
-        (uint256 id1, ) = router.deposit(3_000e6, payrollDate1, recipients1);
-        (uint256 id2, ) = router.deposit(4_000e6, payrollDate2, recipients2);
-        (uint256 id3, ) = router.deposit(5_000e6, payrollDate3, recipients3);
+        router.deposit(3_000e6, payrollDate1, recipients1);
+        router.deposit(4_000e6, payrollDate2, recipients2);
+        router.deposit(5_000e6, payrollDate3, recipients3);
         vm.stopPrank();
 
         // Check provider payrolls

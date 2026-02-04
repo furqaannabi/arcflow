@@ -7,7 +7,7 @@ libs = ["lib"]
 out = "out"
 auto_detect_solc = true
 src = "src"
-via_ir = false
+via_ir = true
 
 [lint]
 exclude_lints = ["screaming-snake-case-immutable", "screaming-snake-case-const"]
