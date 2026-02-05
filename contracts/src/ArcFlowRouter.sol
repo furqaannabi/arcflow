@@ -12,6 +12,7 @@ import {ArcFlowStateManager} from "./ArcFlowStateManager.sol";
 import {ArcFlowBase} from "./ArcFlowBase.sol";
 import {LPPosition} from "./ArcFlowTypes.sol";
 import {PayrollRecipient} from "./structs/ArcPayrollDistributorStructs.sol";
+import {MigrationStatus} from "./structs/CrossChainStructs.sol";
 
 /// @title ArcFlow Router
 /// @notice Single-sided USDC deposit into existing USDC-USDT pool
@@ -34,7 +35,32 @@ contract ArcFlowRouter is ArcFlowBase {
         uint256 usdcBridged,
         uint256 yield
     );
+    event YieldCredited(
+        uint256 indexed payrollId,
+        address indexed provider,
+        uint256 yieldAmount,
+        uint256 totalWithdrawn,
+        uint256 originalDeposit
+    );
     event AgentUpdated(address indexed oldAgent, address indexed newAgent);
+    event MigrationOut(
+        uint256 indexed payrollId,
+        uint256 fromChainId,
+        uint256 toChainId,
+        uint256 amount
+    );
+    event MigrationIn(
+        uint256 indexed payrollId,
+        uint256 fromChainId,
+        uint256 amount,
+        uint128 newLiquidity
+    );
+
+    // Track yield per provider
+    mapping(address => uint256) public providerAccumulatedYield;
+
+    // Track pending migrations (payrollId => migrated USDC amount)
+    mapping(uint256 => uint256) public pendingMigrations;
 
     // ============ Constructor ============
 
@@ -123,7 +149,27 @@ contract ArcFlowRouter is ArcFlowBase {
 
         (uint256 usdc0, uint256 usdt0) = _removeLiquidity(pos.liquidity);
         if (usdt0 > 0) usdc0 += _swap(false, usdt0);
-        usdcBridged = usdc0;
+
+        // Calculate yield (can be positive or negative due to IL)
+        uint256 yieldAmount = 0;
+        uint256 originalDeposit = pos.usdcDeposited;
+
+        if (usdc0 > originalDeposit) {
+            // Positive yield - send principal to gateway, yield to provider
+            yieldAmount = usdc0 - originalDeposit;
+            usdcBridged = originalDeposit;
+
+            // Credit yield to provider
+            providerAccumulatedYield[pos.provider] += yieldAmount;
+
+            // Transfer yield directly to provider
+            usdc.safeTransfer(pos.provider, yieldAmount);
+
+            emit YieldCredited(payrollId, pos.provider, yieldAmount, usdc0, originalDeposit);
+        } else {
+            // No yield or negative (IL) - bridge whatever we got
+            usdcBridged = usdc0;
+        }
 
         uint128 liq = pos.liquidity;
         address provider = pos.provider;
@@ -133,10 +179,192 @@ contract ArcFlowRouter is ArcFlowBase {
         _removePayroll(payrollId);
         _removeFromProviderPayrolls(provider, payrollId);
 
+        // Bridge principal to gateway for distribution
         usdc.approve(address(gatewayWallet), usdcBridged);
         gatewayWallet.deposit(address(usdc), usdcBridged);
 
-        emit Withdrawn(payrollId, provider, liq, usdcBridged, 0);
+        emit Withdrawn(payrollId, provider, liq, usdcBridged, yieldAmount);
+    }
+
+    // ============ Migration Functions ============
+
+    /// @notice Migrate funds OUT to another chain for better yield
+    /// @dev Removes LP, converts to USDC, bridges via Circle Gateway
+    /// @param payrollId The payroll to migrate
+    /// @param targetChainId The destination chain ID
+    /// @return amount The USDC amount being migrated
+    function migrateOut(
+        uint256 payrollId,
+        uint256 targetChainId
+    ) external onlyAgent returns (uint256 amount) {
+        LPPosition storage pos = positions[payrollId];
+        require(pos.liquidity > 0, "No position");
+        require(pos.currentChainId == chainId, "Not on this chain");
+        require(targetChainId != chainId, "Same chain");
+
+        // Check migration is valid (not too close to payroll date)
+        require(
+            stateManager.isMigrationValid(pos.payrollDate),
+            "Too close to payroll date"
+        );
+
+        // Remove liquidity
+        (uint256 usdc0, uint256 usdt0) = _removeLiquidity(pos.liquidity);
+
+        // Swap USDT back to USDC
+        if (usdt0 > 0) {
+            usdc0 += _swap(false, usdt0);
+        }
+
+        amount = usdc0;
+
+        // Update position state
+        uint128 oldLiquidity = pos.liquidity;
+        pos.liquidity = 0;
+        pos.currentChainId = targetChainId;
+        pos.migrationCount++;
+
+        totalLiquidity -= oldLiquidity;
+
+        // Update state manager
+        stateManager.updateMigrationState(
+            payrollId,
+            amount,
+            chainId,
+            targetChainId,
+            MigrationStatus.PENDING
+        );
+
+        // Bridge USDC via Circle Gateway
+        usdc.approve(address(gatewayWallet), amount);
+        gatewayWallet.deposit(address(usdc), amount);
+
+        emit MigrationOut(payrollId, chainId, targetChainId, amount);
+    }
+
+    /// @notice Migrate funds IN from another chain
+    /// @dev Mints USDC from Circle Gateway, adds to LP
+    /// @param payrollId The payroll being migrated
+    /// @param fromChainId The source chain ID
+    /// @param amount The USDC amount being received
+    /// @param attestation Circle Gateway attestation
+    /// @param signature Circle Gateway signature
+    /// @return newLiquidity The new LP position liquidity
+    function migrateIn(
+        uint256 payrollId,
+        uint256 fromChainId,
+        uint256 amount,
+        bytes calldata attestation,
+        bytes calldata signature
+    ) external onlyAgent returns (uint128 newLiquidity) {
+        LPPosition storage pos = positions[payrollId];
+        require(pos.currentChainId == chainId, "Not migrating to this chain");
+        require(pos.liquidity == 0, "Already has liquidity");
+
+        // Mint USDC from Circle Gateway
+        gatewayMinter.gatewayMint(attestation, signature);
+
+        // Add to LP pool
+        uint256 swapAmount = amount / 2;
+        uint256 usdtReceived = _swap(true, swapAmount);
+        uint256 usdcForLp = amount - swapAmount;
+
+        newLiquidity = _addLiquidity(usdcForLp, usdtReceived);
+
+        // Update position
+        pos.liquidity = newLiquidity;
+        totalLiquidity += newLiquidity;
+
+        // Update state manager
+        stateManager.updateMigrationState(
+            payrollId,
+            amount,
+            fromChainId,
+            chainId,
+            MigrationStatus.COMPLETED
+        );
+
+        emit MigrationIn(payrollId, fromChainId, amount, newLiquidity);
+    }
+
+    /// @notice Get payrolls eligible for migration (to better yield chain)
+    /// @return payrollIds Array of payroll IDs that can be migrated
+    /// @return currentApys Current APY for each position
+    function getMigratablePayrolls()
+        external
+        view
+        returns (uint256[] memory payrollIds, uint256[] memory currentApys)
+    {
+        uint256 count = 0;
+
+        // Count eligible payrolls
+        for (uint256 i = 0; i < activePayrollIds.length; i++) {
+            LPPosition memory pos = positions[activePayrollIds[i]];
+            if (
+                pos.currentChainId == chainId &&
+                pos.liquidity > 0 &&
+                stateManager.isMigrationValid(pos.payrollDate)
+            ) {
+                count++;
+            }
+        }
+
+        // Build arrays
+        payrollIds = new uint256[](count);
+        currentApys = new uint256[](count);
+        uint256 idx = 0;
+
+        (uint256 currentChainApy, , ) = stateManager.getChainApy(chainId);
+
+        for (uint256 i = 0; i < activePayrollIds.length; i++) {
+            uint256 pid = activePayrollIds[i];
+            LPPosition memory pos = positions[pid];
+            if (
+                pos.currentChainId == chainId &&
+                pos.liquidity > 0 &&
+                stateManager.isMigrationValid(pos.payrollDate)
+            ) {
+                payrollIds[idx] = pid;
+                currentApys[idx] = currentChainApy;
+                idx++;
+            }
+        }
+    }
+
+    /// @notice Check if migration is recommended for a payroll
+    /// @param payrollId The payroll to check
+    /// @return migrate Whether migration is recommended
+    /// @return targetChain The recommended target chain (0 if no migration)
+    /// @return apyDiff The APY difference in basis points
+    function shouldMigrate(
+        uint256 payrollId
+    )
+        external
+        view
+        returns (bool migrate, uint256 targetChain, uint256 apyDiff)
+    {
+        LPPosition memory pos = positions[payrollId];
+
+        if (pos.currentChainId != chainId || pos.liquidity == 0) {
+            return (false, 0, 0);
+        }
+
+        if (!stateManager.isMigrationValid(pos.payrollDate)) {
+            return (false, 0, 0);
+        }
+
+        (uint256 currentApy, , ) = stateManager.getChainApy(chainId);
+        (uint256 bestChain, uint256 bestApy) = stateManager.getBestChainForApy();
+
+        if (bestChain != chainId && bestApy > currentApy) {
+            apyDiff = bestApy - currentApy;
+            // Recommend migration if APY diff > 50 basis points (0.5%)
+            if (apyDiff >= 50) {
+                return (true, bestChain, apyDiff);
+            }
+        }
+
+        return (false, 0, 0);
     }
 
     // ============ View Functions ============
@@ -176,6 +404,10 @@ contract ArcFlowRouter is ArcFlowBase {
 
     function getChainId() external view returns (uint256) {
         return chainId;
+    }
+
+    function getProviderAccumulatedYield(address provider) external view returns (uint256) {
+        return providerAccumulatedYield[provider];
     }
 
     // ============ Batch Execute ============

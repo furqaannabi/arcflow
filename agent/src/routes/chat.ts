@@ -81,7 +81,7 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
         properties: {
           chain: {
             type: "string",
-            description: "Blockchain to check yields on (e.g., Ethereum, Arbitrum)",
+            description: "Blockchain to check yields on (e.g., Ethereum, Base)",
           },
         },
         required: [],

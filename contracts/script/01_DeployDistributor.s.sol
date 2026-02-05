@@ -4,35 +4,65 @@ pragma solidity ^0.8.26;
 import {Script, console} from "forge-std/Script.sol";
 
 import {ArcPayrollDistributor} from "../src/ArcPayrollDistributor.sol";
+import {ChainConfig} from "./ChainConfig.sol";
 
 /// @notice Deploys the ArcPayrollDistributor contract on Arc Network
+/// @dev Only runs on Arc Testnet (chain ID: 5042002)
 contract DeployDistributorScript is Script {
-    // Circle Gateway Minter on Arc Testnet
-    address constant GATEWAY_MINTER =
-        0x0022222ABE238Cc2C7Bb1f21003F0a260052475B;
-
     function run() public {
+        // Validate we're on Arc chain
+        require(ChainConfig.isArcChain(), "Not Arc chain - use DeployAll for source chains");
+
+        // Get chain config
+        ChainConfig.Config memory config = ChainConfig.getConfig();
+
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
         address agentAddress = vm.envOr("AGENT_ADDRESS", deployer);
 
-        console.log("Deploying ArcPayrollDistributor on Arc Network...");
+        console.log("=== ArcPayrollDistributor Deployment ===");
+        console.log("Chain:", config.name);
+        console.log("Chain ID:", config.chainId);
         console.log("Deployer:", deployer);
         console.log("Agent:", agentAddress);
-        console.log("GatewayMinter:", GATEWAY_MINTER);
+        console.log("Gateway Minter:", config.gatewayMinter);
 
         vm.startBroadcast(deployerPrivateKey);
 
         ArcPayrollDistributor distributor = new ArcPayrollDistributor(
-            GATEWAY_MINTER
+            config.gatewayMinter
         );
+        console.log("ArcPayrollDistributor deployed at:", address(distributor));
 
         // Authorize the agent
         distributor.setAgentAuthorization(agentAddress, true);
+        console.log("Agent authorized");
 
         vm.stopBroadcast();
 
-        console.log("ArcPayrollDistributor deployed at:", address(distributor));
-        console.log("Agent authorized:", agentAddress);
+        console.log("");
+        console.log("=== Deployment Complete ===");
+        console.log("Distributor:", address(distributor));
+
+        // Write addresses to file
+        _writeAddresses(config, address(distributor));
+    }
+
+    function _writeAddresses(
+        ChainConfig.Config memory config,
+        address distributor
+    ) internal {
+        string memory json = string.concat(
+            '{\n',
+            '  "arcTestnet": {\n',
+            '    "distributor": "', vm.toString(distributor), '",\n',
+            '    "gatewayMinter": "', vm.toString(config.gatewayMinter), '",\n',
+            '    "circleDomain": ', vm.toString(uint256(config.circleDomain)), '\n',
+            '  }\n',
+            '}'
+        );
+
+        vm.writeFile("deployments/arcTestnet.json", json);
+        console.log("Deployment saved to: deployments/arcTestnet.json");
     }
 }

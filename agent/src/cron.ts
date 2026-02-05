@@ -8,19 +8,30 @@ import {
   keccak256,
   encodeAbiParameters,
   parseAbiParameters,
+  parseUnits,
 } from "viem";
 import { privateKeyToAccount, signMessage } from "viem/accounts";
-import { baseSepolia } from "viem/chains";
+import { baseSepolia, arbitrumSepolia, sepolia } from "viem/chains";
+import { DefiLlamaService } from "./defillama.js";
+import addressesJson from "./addresses.json" with { type: "json" };
 
-// Contract addresses
-const ROUTER_ADDRESS = "0x3734E5E2Ac678c513C9Ed47A040a9E7Fd83b64C7" as Address;
+// Contract addresses from config
+const ROUTER_ADDRESS = addressesJson.baseSepolia.router as Address;
+const STATE_MANAGER_ADDRESS = addressesJson.baseSepolia.stateManager as Address;
 const DISTRIBUTOR_ADDRESS = "0x0000000000000000000000000000000000000000" as Address; // Set after deployment on Arc
+
+// Supported chains for APY monitoring
+const SUPPORTED_CHAINS = [
+  { id: 84532, name: "Base", defiLlamaName: "Base" },
+  { id: 421614, name: "Arbitrum", defiLlamaName: "Arbitrum" },
+  { id: 11155111, name: "Sepolia", defiLlamaName: "Ethereum" },
+] as const;
 
 // Arc Chain config (placeholder - update with actual Arc Chain)
 const ARC_CHAIN = {
   id: 5042002,
   name: "Arc Testnet",
-  rpcUrls: { default: { http: ["https://rpc.arc.dev"] } },
+  rpcUrls: { default: { http: ["https://rpc.testnet.arc.network"] } },
 } as const;
 
 const ROUTER_ABI = [
@@ -95,6 +106,60 @@ const DISTRIBUTOR_ABI = [
   },
 ] as const;
 
+const STATE_MANAGER_ABI = [
+  {
+    name: "batchUpdateChainApy",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "chainIds", type: "uint256[]" },
+      { name: "apys", type: "uint256[]" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "getBestChainForApy",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      { name: "bestChainId", type: "uint256" },
+      { name: "bestApy", type: "uint256" },
+    ],
+  },
+  {
+    name: "getChainApy",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "_chainId", type: "uint256" }],
+    outputs: [
+      { name: "apy", type: "uint256" },
+      { name: "lastUpdated", type: "uint256" },
+      { name: "isStale", type: "bool" },
+    ],
+  },
+  {
+    name: "updateMigrationState",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "payrollId", type: "uint256" },
+      { name: "amount", type: "uint256" },
+      { name: "fromChainId", type: "uint256" },
+      { name: "toChainId", type: "uint256" },
+      { name: "status", type: "uint8" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "isMigrationValid",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "payrollDate", type: "uint256" }],
+    outputs: [{ name: "", type: "bool" }],
+  },
+] as const;
+
 interface PendingDistribution {
   payrollId: bigint;
   provider: Address;
@@ -113,18 +178,46 @@ export interface CronResult {
   error?: string;
 }
 
+export interface ApyUpdateResult {
+  timestamp: Date;
+  chainsUpdated: number;
+  apyData: { chainId: number; chainName: string; apy: number }[];
+  txHash?: string;
+  error?: string;
+}
+
+export interface RebalanceResult {
+  timestamp: Date;
+  payrollId: bigint;
+  fromChain: number;
+  toChain: number;
+  amount: bigint;
+  apyDiff: number;
+  txHash?: string;
+  error?: string;
+}
+
 /**
  * Autonomous Payroll Cron - runs every minute, checks and executes ready payrolls
+ * Also monitors APY across chains every 6 hours and handles rebalancing
  */
 export class PayrollCron {
   private rpcUrl: string;
   private privateKey: string | undefined;
   private intervalId: NodeJS.Timeout | null = null;
+  private apyIntervalId: NodeJS.Timeout | null = null;
   private results: CronResult[] = [];
+  private apyResults: ApyUpdateResult[] = [];
+  private rebalanceResults: RebalanceResult[] = [];
+  private defiLlamaService: DefiLlamaService;
+
+  // Minimum APY difference to trigger rebalance (0.5% = 50 basis points)
+  private readonly MIN_APY_DIFF_FOR_REBALANCE = 0.5;
 
   constructor(rpcUrl?: string, privateKey?: string) {
     this.rpcUrl = rpcUrl || "https://sepolia.drpc.org";
     this.privateKey = privateKey;
+    this.defiLlamaService = new DefiLlamaService();
   }
 
   /**
@@ -211,6 +304,171 @@ export class PayrollCron {
   }
 
   /**
+   * Fetch APY rates from DefiLlama and update StateManager
+   */
+  async updateApyRates(): Promise<ApyUpdateResult> {
+    const result: ApyUpdateResult = {
+      timestamp: new Date(),
+      chainsUpdated: 0,
+      apyData: [],
+    };
+
+    try {
+      console.log("[APY] Fetching APY rates from DefiLlama...");
+
+      const chainNames = SUPPORTED_CHAINS.map((c) => c.defiLlamaName);
+      const apyMap = await this.defiLlamaService.getApyForChains(chainNames);
+
+      const chainIds: bigint[] = [];
+      const apys: bigint[] = [];
+
+      for (const chain of SUPPORTED_CHAINS) {
+        const yieldData = apyMap.get(chain.defiLlamaName);
+        if (yieldData) {
+          // Convert APY percentage to basis points (e.g., 5.5% -> 550)
+          const apyBps = Math.floor(yieldData.apy * 100);
+          chainIds.push(BigInt(chain.id));
+          apys.push(BigInt(apyBps));
+
+          result.apyData.push({
+            chainId: chain.id,
+            chainName: chain.name,
+            apy: yieldData.apy,
+          });
+
+          console.log(`[APY] ${chain.name}: ${yieldData.apy.toFixed(2)}% (${yieldData.project})`);
+        }
+      }
+
+      if (chainIds.length > 0 && this.privateKey) {
+        const account = privateKeyToAccount(this.privateKey as `0x${string}`);
+        const walletClient = createWalletClient({
+          account,
+          chain: baseSepolia,
+          transport: http(this.rpcUrl),
+        });
+
+        const hash = await walletClient.writeContract({
+          address: STATE_MANAGER_ADDRESS,
+          abi: STATE_MANAGER_ABI,
+          functionName: "batchUpdateChainApy",
+          args: [chainIds, apys],
+        });
+
+        result.txHash = hash;
+        result.chainsUpdated = chainIds.length;
+        console.log(`[APY] Updated ${chainIds.length} chains on-chain. TX: ${hash}`);
+      } else if (!this.privateKey) {
+        console.log("[APY] No private key - skipping on-chain update");
+        result.chainsUpdated = chainIds.length;
+      }
+    } catch (error) {
+      result.error = (error as Error).message;
+      console.error("[APY] Error updating APY:", result.error);
+    }
+
+    this.apyResults.push(result);
+    if (this.apyResults.length > 50) {
+      this.apyResults.shift();
+    }
+
+    return result;
+  }
+
+  /**
+   * Get best chain for APY from StateManager
+   */
+  async getBestChainForApy(): Promise<{ chainId: bigint; apy: bigint } | null> {
+    try {
+      const client = createPublicClient({
+        chain: baseSepolia,
+        transport: http(this.rpcUrl),
+      });
+
+      const [bestChainId, bestApy] = await client.readContract({
+        address: STATE_MANAGER_ADDRESS,
+        abi: STATE_MANAGER_ABI,
+        functionName: "getBestChainForApy",
+      });
+
+      return { chainId: bestChainId, apy: bestApy };
+    } catch (error) {
+      console.error("[APY] Error getting best chain:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Check if a payroll can be migrated (not too close to payroll date)
+   */
+  async canMigratePayroll(payrollDate: bigint): Promise<boolean> {
+    try {
+      const client = createPublicClient({
+        chain: baseSepolia,
+        transport: http(this.rpcUrl),
+      });
+
+      const canMigrate = await client.readContract({
+        address: STATE_MANAGER_ADDRESS,
+        abi: STATE_MANAGER_ABI,
+        functionName: "isMigrationValid",
+        args: [payrollDate],
+      });
+
+      return canMigrate as boolean;
+    } catch (error) {
+      console.error("[REBALANCE] Error checking migration validity:", error);
+      return false;
+    }
+  }
+
+  /**
+   * Check active payrolls for rebalancing opportunities
+   */
+  async checkRebalancingOpportunities(): Promise<void> {
+    console.log("[REBALANCE] Checking for rebalancing opportunities...");
+
+    try {
+      const client = createPublicClient({
+        chain: baseSepolia,
+        transport: http(this.rpcUrl),
+      });
+
+      // Get best chain for APY
+      const bestChain = await this.getBestChainForApy();
+      if (!bestChain || bestChain.chainId === BigInt(0)) {
+        console.log("[REBALANCE] No valid APY data available");
+        return;
+      }
+
+      const bestApyPercent = Number(bestChain.apy) / 100;
+      console.log(`[REBALANCE] Best APY: ${bestApyPercent.toFixed(2)}% on chain ${bestChain.chainId}`);
+
+      // Get active payrolls from router
+      // Note: This would need to iterate through positions and check currentChainId
+      // For now, we log that rebalancing logic is ready
+      console.log("[REBALANCE] Rebalancing logic ready - awaiting multi-chain deployment");
+
+    } catch (error) {
+      console.error("[REBALANCE] Error:", error);
+    }
+  }
+
+  /**
+   * APY monitoring tick - runs every 6 hours
+   */
+  async apyTick(): Promise<ApyUpdateResult> {
+    const result = await this.updateApyRates();
+
+    // Check rebalancing opportunities after APY update
+    if (result.chainsUpdated > 0) {
+      await this.checkRebalancingOpportunities();
+    }
+
+    return result;
+  }
+
+  /**
    * Start the cron (runs every minute by default)
    */
   start(intervalMs: number = 60000) {
@@ -221,6 +479,7 @@ export class PayrollCron {
 
     console.log(`[CRON] Starting payroll cron (interval: ${intervalMs}ms)`);
     console.log(`[CRON] Router: ${ROUTER_ADDRESS}`);
+    console.log(`[CRON] State Manager: ${STATE_MANAGER_ADDRESS}`);
     console.log(`[CRON] Auto-execute: ${this.privateKey ? "enabled" : "disabled (no private key)"}`);
 
     // Run immediately
@@ -228,6 +487,16 @@ export class PayrollCron {
 
     // Then run on interval
     this.intervalId = setInterval(() => this.tick(), intervalMs);
+
+    // Start APY monitoring (every 6 hours = 21600000ms)
+    const APY_INTERVAL = 6 * 60 * 60 * 1000;
+    console.log(`[APY] Starting APY monitoring (interval: ${APY_INTERVAL / 1000 / 60} minutes)`);
+
+    // Run APY update immediately
+    this.apyTick();
+
+    // Then run on 6-hour interval
+    this.apyIntervalId = setInterval(() => this.apyTick(), APY_INTERVAL);
   }
 
   /**
@@ -237,22 +506,55 @@ export class PayrollCron {
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
-      console.log("[CRON] Stopped");
+      console.log("[CRON] Payroll cron stopped");
+    }
+    if (this.apyIntervalId) {
+      clearInterval(this.apyIntervalId);
+      this.apyIntervalId = null;
+      console.log("[CRON] APY monitoring stopped");
     }
   }
 
   /**
-   * Get recent results
+   * Get recent payroll results
    */
   getResults(): CronResult[] {
     return this.results;
   }
 
   /**
-   * Get last result
+   * Get last payroll result
    */
   getLastResult(): CronResult | null {
     return this.results[this.results.length - 1] || null;
+  }
+
+  /**
+   * Get recent APY update results
+   */
+  getApyResults(): ApyUpdateResult[] {
+    return this.apyResults;
+  }
+
+  /**
+   * Get last APY update result
+   */
+  getLastApyResult(): ApyUpdateResult | null {
+    return this.apyResults[this.apyResults.length - 1] || null;
+  }
+
+  /**
+   * Get rebalance results
+   */
+  getRebalanceResults(): RebalanceResult[] {
+    return this.rebalanceResults;
+  }
+
+  /**
+   * Force APY update (for testing)
+   */
+  async forceApyUpdate(): Promise<ApyUpdateResult> {
+    return this.apyTick();
   }
 }
 
