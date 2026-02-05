@@ -3,12 +3,14 @@ import {
   LayoutDashboard, 
   CreditCard, 
   Settings, 
+  Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
   { icon: CreditCard, label: "Payroll", path: "/payroll" },
+  { icon: Bot, label: "AI Assistant", path: "/chat" },
   { icon: Settings, label: "Settings", path: "/settings" },
 ];
 

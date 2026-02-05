@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import { toPasskeyTransport, toWebAuthnCredential, toCircleSmartAccount, toModularTransport, WebAuthnMode } from '@circle-fin/modular-wallets-core';
-import { createPublicClient } from 'viem';
+import { createPublicClient, createWalletClient } from 'viem';
 import { toWebAuthnAccount } from 'viem/account-abstraction';
 import { polygon, polygonAmoy, arbitrum, arbitrumSepolia, base, baseSepolia, optimism, optimismSepolia, avalanche, avalancheFuji } from 'viem/chains';
 
@@ -32,6 +32,7 @@ interface AuthContextType {
   connect: (chainKey?: SupportedChainKey) => Promise<void>;
   disconnect: () => void;
   switchChain: (chainKey: SupportedChainKey) => Promise<void>;
+  sendTransaction: (tx: { to: string; data: string; value?: bigint }) => Promise<string>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -172,6 +173,60 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [credential]);
 
+  const sendTransaction = useCallback(async (tx: { to: string; data: string; value?: bigint }) => {
+    if (!credential) {
+      throw new Error("Wallet not connected");
+    }
+
+    try {
+      console.log(`Sending transaction on ${currentChain}...`);
+      
+      const clientKey = import.meta.env.VITE_CIRCLE_CLIENT_KEY;
+      const clientUrl = import.meta.env.VITE_CIRCLE_CLIENT_URL; // Using client URL as bundler URL
+      
+      const selectedChain = SUPPORTED_CHAINS[currentChain];
+      
+      const modularTransport = toModularTransport(
+        `${clientUrl}/${selectedChain.path}`,
+        clientKey
+      );
+
+      // Create public client for gas estimation etc
+      const publicClient = createPublicClient({
+        chain: selectedChain.chain,
+        transport: modularTransport,
+      });
+
+      // Create smart account
+      const smartAccount = await toCircleSmartAccount({
+        client: publicClient,
+        owner: toWebAuthnAccount({ credential }),
+      });
+
+      // Create bundler/wallet client
+      // Note: we use the smart account as the account
+      const walletClient = createWalletClient({
+        account: smartAccount,
+        chain: selectedChain.chain,
+        transport: modularTransport, 
+      });
+
+      const hash = await walletClient.sendTransaction({
+        account: smartAccount,
+        to: tx.to as `0x${string}`,
+        data: tx.data as `0x${string}`,
+        value: tx.value || 0n,
+        chain: selectedChain.chain, // Explicitly pass chain to be safe
+      });
+
+      console.log('Transaction sent:', hash);
+      return hash;
+    } catch (error) {
+      console.error('Failed to send transaction:', error);
+      throw error;
+    }
+  }, [credential, currentChain]);
+
   const disconnect = useCallback(() => {
     setIsConnected(false);
     setUserAddress(null);
@@ -188,6 +243,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         connect,
         disconnect,
         switchChain,
+        sendTransaction,
       }}
     >
       {children}

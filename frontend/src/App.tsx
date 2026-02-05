@@ -3,6 +3,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import Landing from "@/pages/Landing";
 import Dashboard from "@/pages/Dashboard";
 import Payroll from "@/pages/Payroll";
+import AgentChat from "@/pages/AgentChat";
 
 function App() {
   return (
@@ -12,6 +13,7 @@ function App() {
           <Route path="/" element={<Landing />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/payroll" element={<Payroll />} />
+          <Route path="/chat" element={<AgentChat />} />
           {/* Future routes */}
           {/* <Route path="/deposit" element={<Deposit />} /> */}
           {/* <Route path="/recipients" element={<Recipients />} /> */}
