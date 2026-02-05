@@ -99,6 +99,14 @@ export interface RebalanceResult {
   error?: string;
 }
 
+export interface RebalancingOpportunity {
+  payrollId: bigint;
+  currentChain: string;
+  targetChain: bigint;
+  apyDiff: bigint;
+  shouldMigrate: boolean;
+}
+
 /**
  * Autonomous Payroll Cron - runs every minute, checks and executes ready payrolls
  * Also monitors APY across chains every 6 hours and handles rebalancing
@@ -394,16 +402,18 @@ export class PayrollCron {
 
   /**
    * Check active payrolls for rebalancing opportunities across all chains
+   * Returns array of opportunities and optionally executes migrations if private key is set
    */
-  async checkRebalancingOpportunities(): Promise<void> {
+  async checkRebalancingOpportunities(): Promise<RebalancingOpportunity[]> {
     console.log("[REBALANCE] Checking for rebalancing opportunities across all chains...");
+    const opportunities: RebalancingOpportunity[] = [];
 
     try {
       // Get best chain for APY
       const bestChain = await this.getBestChainForApy();
       if (!bestChain || bestChain.chainId === BigInt(0)) {
         console.log("[REBALANCE] No valid APY data available");
-        return;
+        return opportunities;
       }
 
       const bestApyPercent = Number(bestChain.apy) / 100;
@@ -438,6 +448,16 @@ export class PayrollCron {
           for (const payrollId of activePayrollIds) {
             try {
               const result = await this.shouldMigrate(chainConfig, payrollId);
+
+              // Always add to opportunities list
+              opportunities.push({
+                payrollId,
+                currentChain: chainConfig.name,
+                targetChain: result.targetChain,
+                apyDiff: result.apyDiff,
+                shouldMigrate: result.migrate,
+              });
+
               if (result.migrate) {
                 const apyDiffPercent = Number(result.apyDiff) / 100;
                 console.log(`[REBALANCE] ${chainConfig.name}: Payroll #${payrollId} should migrate to chain ${result.targetChain} (APY diff: +${apyDiffPercent.toFixed(2)}%)`);
@@ -472,6 +492,8 @@ export class PayrollCron {
     } catch (error) {
       console.error("[REBALANCE] Error:", error);
     }
+
+    return opportunities;
   }
 
   /**

@@ -1,6 +1,5 @@
 import {
   createPublicClient,
-  createWalletClient,
   http,
   type Address,
   type PublicClient,
@@ -13,10 +12,10 @@ import {
   toBytes,
 } from "viem";
 import { sepolia, baseSepolia } from "viem/chains";
-import type { Chain } from "viem/chains";
-import { privateKeyToAccount, signMessage } from "viem/accounts";
-import { getAlchemyRpcUrls, type RpcConfig } from "./config";
+import { signMessage } from "viem/accounts";
+import { getRpcUrl, CHAIN_IDS } from "./config";
 import addressesJson from "./addresses.json" with { type: "json" };
+import abis from "./abis.json" with { type: "json" };
 
 // Arc Testnet chain definition
 const arcTestnet: Chain = {
@@ -48,31 +47,31 @@ export interface ChainConfig {
 const GATEWAY_WALLET_TESTNET = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9" as Address;
 const GATEWAY_MINTER_TESTNET = "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B" as Address;
 
-// Supported chains configuration
+// Supported chains configuration (uses addresses.json for USDC addresses)
 export const CHAIN_CONFIGS: Record<number, ChainConfig> = {
   // Sepolia (Ethereum testnet)
-  11155111: {
-    chainId: 11155111,
+  [CHAIN_IDS.SEPOLIA]: {
+    chainId: CHAIN_IDS.SEPOLIA,
     name: "Sepolia",
     chain: sepolia,
-    usdc: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238" as Address,
+    usdc: addressesJson.sepolia.usdc as Address,
     custodyContract: "0x019B65A265EB3363822f2752141b3dF16131b262" as Address,
     gatewayWallet: GATEWAY_WALLET_TESTNET,
     circleDomain: 0,
   },
   // Base Sepolia
-  84532: {
-    chainId: 84532,
+  [CHAIN_IDS.BASE_SEPOLIA]: {
+    chainId: CHAIN_IDS.BASE_SEPOLIA,
     name: "Base Sepolia",
     chain: baseSepolia,
-    usdc: "0x036CbD53842c5426634e7929541eC2318f3dCF7e" as Address,
+    usdc: addressesJson.baseSepolia.usdc as Address,
     custodyContract: "0x0000000000000000000000000000000000000000" as Address,
     gatewayWallet: GATEWAY_WALLET_TESTNET,
     circleDomain: 6,
   },
   // Arc Testnet (distribution chain)
-  5042002: {
-    chainId: 5042002,
+  [CHAIN_IDS.ARC_TESTNET]: {
+    chainId: CHAIN_IDS.ARC_TESTNET,
     name: "Arc Testnet",
     chain: arcTestnet,
     usdc: "0x0000000000000000000000000000000000000000" as Address, // Minted via Gateway
@@ -86,41 +85,11 @@ export const CHAIN_CONFIGS: Record<number, ChainConfig> = {
 export const ARC_DISTRIBUTOR_ADDRESS = addressesJson.arcTestnet.distributor as Address;
 
 // Default chain
-const DEFAULT_CHAIN_ID = 11155111; // Sepolia
+const DEFAULT_CHAIN_ID = CHAIN_IDS.SEPOLIA;
 
-// ABI for Yellow Network Custody Contract
-const CUSTODY_ABI = [
-  {
-    name: "getAccountsBalances",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "users", type: "address[]" },
-      { name: "tokens", type: "address[]" },
-    ],
-    outputs: [{ name: "", type: "uint256[]" }],
-  },
-  {
-    name: "withdraw",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "token", type: "address" },
-      { name: "amount", type: "uint256" },
-    ],
-    outputs: [],
-  },
-  {
-    name: "deposit",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "token", type: "address" },
-      { name: "amount", type: "uint256" },
-    ],
-    outputs: [],
-  },
-] as const;
+// ABIs from centralized abis.json
+const CUSTODY_ABI = abis.custody;
+const DISTRIBUTOR_ABI = abis.distributor;
 
 // ============ Interfaces ============
 
@@ -180,14 +149,11 @@ export class YellowNetworkService {
   private rpcUrls: Map<number, string> = new Map();
 
   constructor(rpcUrls?: Record<number, string>, alchemyApiKey?: string) {
-    // Get Alchemy RPC URLs if API key provided
-    const alchemyUrls = getAlchemyRpcUrls(alchemyApiKey);
-
     // Initialize clients for all supported chains
     for (const [chainIdStr, config] of Object.entries(CHAIN_CONFIGS)) {
       const chainId = parseInt(chainIdStr);
-      // Priority: explicit rpcUrls > Alchemy > config default
-      const rpcUrl = rpcUrls?.[chainId] || alchemyUrls[chainId] || config.rpcUrl;
+      // Priority: explicit rpcUrls > getRpcUrl (uses Alchemy if available)
+      const rpcUrl = rpcUrls?.[chainId] || getRpcUrl(chainId, alchemyApiKey);
 
       if (rpcUrl) {
         this.rpcUrls.set(chainId, rpcUrl);
@@ -260,7 +226,7 @@ export class YellowNetworkService {
       abi: CUSTODY_ABI,
       functionName: "getAccountsBalances",
       args: [[userAddress], [config.usdc]],
-    });
+    }) as bigint[];
 
     const balance = balances[0] || BigInt(0);
 
@@ -602,32 +568,6 @@ export class YellowChunkingService {
     data: string;
     description: string;
   } {
-    const DISTRIBUTOR_ABI = [
-      {
-        name: "mintVerifyAndDistribute",
-        type: "function",
-        stateMutability: "nonpayable",
-        inputs: [
-          { name: "attestation", type: "bytes" },
-          { name: "signature", type: "bytes" },
-          { name: "payrollId", type: "uint256" },
-          { name: "provider", type: "address" },
-          { name: "totalAmount", type: "uint256" },
-          { name: "payrollDate", type: "uint256" },
-          { name: "stateSignature", type: "bytes" },
-          {
-            name: "recipients",
-            type: "tuple[]",
-            components: [
-              { name: "wallet", type: "address" },
-              { name: "amount", type: "uint256" },
-            ],
-          },
-        ],
-        outputs: [{ name: "batchId", type: "uint256" }],
-      },
-    ] as const;
-
     const data = encodeFunctionData({
       abi: DISTRIBUTOR_ABI,
       functionName: "mintVerifyAndDistribute",
