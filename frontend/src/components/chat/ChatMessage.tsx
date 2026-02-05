@@ -64,10 +64,10 @@ export default function ChatMessage({ role, content }: ChatMessageProps) {
     <div className={cn("flex w-full mb-4", isUser ? "justify-end" : "justify-start")}>
       <div
         className={cn(
-          "max-w-[80%] rounded-2xl px-4 py-3 text-sm",
+          "max-w-[80%] rounded-2xl px-4 py-3 text-sm transition-colors duration-300",
           isUser
             ? "bg-blue-600 text-white rounded-tr-sm"
-            : "bg-gray-100 text-gray-800 rounded-tl-sm border border-gray-200"
+            : "bg-gray-100 dark:bg-muted text-gray-800 dark:text-foreground rounded-tl-sm border border-gray-200 dark:border-border"
         )}
       >
         <div className="whitespace-pre-wrap">{textPart}</div>

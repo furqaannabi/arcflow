@@ -20,10 +20,10 @@ export default function ChainSwitcher() {
         id="chain-select"
         value={currentChain}
         onChange={handleChainChange}
-        className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        className="px-3 py-1.5 bg-white dark:bg-muted border border-gray-300 dark:border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-foreground appearance-none min-w-[120px]"
       >
         {Object.entries(SUPPORTED_CHAINS).map(([key, { chain }]) => (
-          <option key={key} value={key}>
+          <option key={key} value={key} className="bg-white dark:bg-popover text-gray-900 dark:text-foreground">
             {chain.name}
           </option>
         ))}

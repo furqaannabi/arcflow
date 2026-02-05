@@ -47,18 +47,18 @@ export default function TransactionAction({ to, data, description, value = "0" }
 
   if (status === "success") {
     return (
-      <div className="bg-green-50 border border-green-100 rounded-lg p-4 mt-2">
-        <div className="flex items-center gap-2 mb-2 text-green-700 font-semibold">
+      <div className="bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-900/20 rounded-lg p-4 mt-2 transition-colors">
+        <div className="flex items-center gap-2 mb-2 text-green-700 dark:text-green-400 font-semibold">
           <CheckCircle className="w-5 h-5" />
           <span>Transaction Sent</span>
         </div>
-        <p className="text-sm text-green-600 mb-2">{description}</p>
+        <p className="text-sm text-green-600 dark:text-green-400/80 mb-2">{description}</p>
         {txHash && explorerUrl && (
           <a
             href={`${explorerUrl}/tx/${txHash}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-xs text-green-700 underline hover:no-underline"
+            className="text-xs text-green-700 dark:text-green-400 underline hover:no-underline"
           >
             View on Explorer
           </a>
@@ -68,11 +68,11 @@ export default function TransactionAction({ to, data, description, value = "0" }
   }
 
   return (
-    <div className="bg-white border boundary-gray-200 rounded-lg p-4 mt-2 shadow-sm">
-      <h4 className="font-semibold text-gray-900 mb-2">Action Required</h4>
-      <p className="text-sm text-gray-600 mb-4">{description}</p>
+    <div className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg p-4 mt-2 shadow-sm transition-colors">
+      <h4 className="font-semibold text-gray-900 dark:text-foreground mb-2">Action Required</h4>
+      <p className="text-sm text-gray-600 dark:text-muted-foreground mb-4">{description}</p>
       
-      <div className="bg-gray-50 rounded p-3 mb-4 text-xs font-mono text-gray-500 overflow-hidden text-ellipsis whitespace-nowrap">
+      <div className="bg-gray-50 dark:bg-muted rounded p-3 mb-4 text-xs font-mono text-gray-500 dark:text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap">
         <div className="flex gap-2 mb-1">
           <span className="font-bold">To:</span> {to}
         </div>
