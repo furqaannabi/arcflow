@@ -1,0 +1,251 @@
+{
+  "router": [
+    {
+      "name": "deposit",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "usdcAmount", "type": "uint256" },
+        { "name": "payrollDate", "type": "uint256" },
+        {
+          "name": "recipients",
+          "type": "tuple[]",
+          "components": [
+            { "name": "wallet", "type": "address" },
+            { "name": "amount", "type": "uint256" }
+          ]
+        }
+      ],
+      "outputs": [
+        { "name": "payrollId", "type": "uint256" },
+        { "name": "liquidity", "type": "uint128" }
+      ]
+    },
+    {
+      "name": "getReadyPayrolls",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [{ "name": "", "type": "uint256[]" }]
+    },
+    {
+      "name": "getActivePayrollIds",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [{ "name": "", "type": "uint256[]" }]
+    },
+    {
+      "name": "isPayrollReady",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [{ "name": "payrollId", "type": "uint256" }],
+      "outputs": [{ "name": "", "type": "bool" }]
+    },
+    {
+      "name": "executeReadyPayrolls",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [],
+      "outputs": [
+        { "name": "executed", "type": "uint256" },
+        { "name": "totalBridged", "type": "uint256" }
+      ]
+    },
+    {
+      "name": "getPosition",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [{ "name": "payrollId", "type": "uint256" }],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "components": [
+            { "name": "payrollId", "type": "uint256" },
+            { "name": "provider", "type": "address" },
+            { "name": "liquidity", "type": "uint128" },
+            { "name": "usdcDeposited", "type": "uint256" },
+            { "name": "depositTime", "type": "uint256" },
+            { "name": "payrollDate", "type": "uint256" },
+            { "name": "payrollStateHash", "type": "bytes32" },
+            { "name": "accumulatedYield", "type": "uint256" },
+            { "name": "sourceChainId", "type": "uint256" },
+            { "name": "currentChainId", "type": "uint256" },
+            { "name": "migrationCount", "type": "uint256" },
+            { "name": "recipientsHash", "type": "bytes32" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "getProviderPositions",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [{ "name": "provider", "type": "address" }],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple[]",
+          "components": [
+            { "name": "payrollId", "type": "uint256" },
+            { "name": "provider", "type": "address" },
+            { "name": "liquidity", "type": "uint128" },
+            { "name": "usdcDeposited", "type": "uint256" },
+            { "name": "depositTime", "type": "uint256" },
+            { "name": "payrollDate", "type": "uint256" },
+            { "name": "payrollStateHash", "type": "bytes32" },
+            { "name": "accumulatedYield", "type": "uint256" },
+            { "name": "sourceChainId", "type": "uint256" },
+            { "name": "currentChainId", "type": "uint256" },
+            { "name": "migrationCount", "type": "uint256" },
+            { "name": "recipientsHash", "type": "bytes32" }
+          ]
+        }
+      ]
+    }
+  ],
+  "stateManager": [
+    {
+      "name": "batchUpdateChainApy",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "chainIds", "type": "uint256[]" },
+        { "name": "apys", "type": "uint256[]" }
+      ],
+      "outputs": []
+    },
+    {
+      "name": "getBestChainForApy",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        { "name": "bestChainId", "type": "uint256" },
+        { "name": "bestApy", "type": "uint256" }
+      ]
+    },
+    {
+      "name": "getChainApy",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [{ "name": "_chainId", "type": "uint256" }],
+      "outputs": [
+        { "name": "apy", "type": "uint256" },
+        { "name": "lastUpdated", "type": "uint256" },
+        { "name": "isStale", "type": "bool" }
+      ]
+    },
+    {
+      "name": "updateMigrationState",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "payrollId", "type": "uint256" },
+        { "name": "amount", "type": "uint256" },
+        { "name": "fromChainId", "type": "uint256" },
+        { "name": "toChainId", "type": "uint256" },
+        { "name": "status", "type": "uint8" }
+      ],
+      "outputs": []
+    },
+    {
+      "name": "isMigrationValid",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [{ "name": "payrollDate", "type": "uint256" }],
+      "outputs": [{ "name": "", "type": "bool" }]
+    }
+  ],
+  "migration": [
+    {
+      "name": "shouldMigrate",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [{ "name": "payrollId", "type": "uint256" }],
+      "outputs": [
+        { "name": "migrate", "type": "bool" },
+        { "name": "targetChain", "type": "uint256" },
+        { "name": "apyDiff", "type": "uint256" }
+      ]
+    },
+    {
+      "name": "migrateOut",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "payrollId", "type": "uint256" },
+        { "name": "targetChainId", "type": "uint256" }
+      ],
+      "outputs": [{ "name": "amount", "type": "uint256" }]
+    },
+    {
+      "name": "migrateIn",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "payrollId", "type": "uint256" },
+        { "name": "fromChainId", "type": "uint256" },
+        { "name": "amount", "type": "uint256" },
+        { "name": "attestation", "type": "bytes" },
+        { "name": "signature", "type": "bytes" }
+      ],
+      "outputs": [{ "name": "newLiquidity", "type": "uint128" }]
+    }
+  ],
+  "distributor": [
+    {
+      "name": "mintVerifyAndDistribute",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "attestation", "type": "bytes" },
+        { "name": "signature", "type": "bytes" },
+        { "name": "payrollId", "type": "uint256" },
+        { "name": "provider", "type": "address" },
+        { "name": "totalAmount", "type": "uint256" },
+        { "name": "payrollDate", "type": "uint256" },
+        { "name": "stateSignature", "type": "bytes" },
+        {
+          "name": "recipients",
+          "type": "tuple[]",
+          "components": [
+            { "name": "wallet", "type": "address" },
+            { "name": "amount", "type": "uint256" }
+          ]
+        }
+      ],
+      "outputs": [{ "name": "batchId", "type": "uint256" }]
+    }
+  ],
+  "erc20": [
+    {
+      "name": "approve",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "spender", "type": "address" },
+        { "name": "amount", "type": "uint256" }
+      ],
+      "outputs": [{ "name": "", "type": "bool" }]
+    },
+    {
+      "name": "allowance",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [
+        { "name": "owner", "type": "address" },
+        { "name": "spender", "type": "address" }
+      ],
+      "outputs": [{ "name": "", "type": "uint256" }]
+    },
+    {
+      "name": "balanceOf",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [{ "name": "account", "type": "address" }],
+      "outputs": [{ "name": "", "type": "uint256" }]
+    }
+  ]
+}

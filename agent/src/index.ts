@@ -1,9 +1,9 @@
 import express from "express";
 import cors from "cors";
 import "dotenv/config";
-import { chatRouter } from "./routes/chat.js";
-import { PayrollCron } from "./cron.js";
-import { YellowChunkingService, CHAIN_CONFIGS, type PayrollRecipient } from "./yellow.js";
+import { chatRouter } from "./routes/chat";
+import { PayrollCron } from "./cron";
+import { YellowChunkingService, CHAIN_CONFIGS, type PayrollRecipient } from "./yellow";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -20,12 +20,8 @@ if (ALCHEMY_API_KEY) {
   console.log("[CONFIG] No ALCHEMY_API_KEY found, using public RPCs");
 }
 
-// Initialize cron with Alchemy
-const cron = new PayrollCron(
-  process.env.RPC_URL,
-  process.env.AGENT_PRIVATE_KEY,
-  ALCHEMY_API_KEY
-);
+// Initialize multi-chain cron
+const cron = new PayrollCron(process.env.AGENT_PRIVATE_KEY);
 
 // Initialize Yellow chunking service with Alchemy
 const yellowChunking = new YellowChunkingService(

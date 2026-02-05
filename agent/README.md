@@ -1,12 +1,12 @@
 # ArcFlow Agent
 
-Autonomous agent service for cross-chain payroll management, APY optimization, and Yellow Network integration.
+Autonomous agent service for cross-chain payroll management, APY optimization, and yield-based rebalancing.
 
 ## Features
 
-- **Payroll Execution Cron** - Automatically executes ready payrolls every 60 seconds
-- **APY Monitoring** - Scans yield rates across chains every 6 hours via DefiLlama
-- **Multi-Chain Support** - Sepolia, Base Sepolia, Arc Testnet
+- **Multi-Chain Payroll Cron** - Monitors and executes ready payrolls across Base Sepolia and Sepolia
+- **APY Monitoring** - Fetches yield rates from DefiLlama every 6 hours
+- **Cross-Chain Migration** - Automatically rebalances funds to highest-yield chains (>0.5% APY diff)
 - **Yellow Network Integration** - Batch chunking and state signing for distribution
 - **Conversational AI** - OpenAI-powered chat interface for payroll management
 
@@ -37,28 +37,52 @@ ALCHEMY_API_KEY=...            # Alchemy API key for multi-chain RPC
 
 # Optional
 PORT=3001                       # Server port (default: 3001)
-RPC_URL=https://...            # Custom RPC URL (overrides Alchemy for primary chain)
 CRON_INTERVAL=60000            # Payroll check interval in ms (default: 60s)
 ```
 
-### Alchemy RPC URLs
-
-With `ALCHEMY_API_KEY` set, the agent automatically uses:
-
-| Chain | Alchemy URL |
-|-------|-------------|
-| Sepolia | `https://eth-sepolia.g.alchemy.com/v2/{key}` |
-| Base Sepolia | `https://base-sepolia.g.alchemy.com/v2/{key}` |
-
-Without an API key, public RPCs are used as fallback.
-
 ## Supported Chains
 
-| Chain | Chain ID | USDC Address | Circle Domain |
-|-------|----------|--------------|---------------|
-| Sepolia | 11155111 | `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` | 0 |
-| Base Sepolia | 84532 | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` | 6 |
-| Arc Testnet | 5042002 | Minted via Gateway | 9 |
+| Chain | Chain ID | Role |
+|-------|----------|------|
+| Base Sepolia | 84532 | Source chain (deposits, LP) |
+| Sepolia | 11155111 | Source chain (deposits, LP) |
+| Arc Testnet | 5042002 | Distribution chain |
+
+## Contract Addresses
+
+### Base Sepolia
+
+| Contract | Address |
+|----------|---------|
+| ArcFlowRouter | `0xA07C9A5C26adefB97F99E6926b5812c2089A156D` |
+| ArcFlowStateManager | `0x50900c76101d5Fd11117417c32942aD246D5A166` |
+| ArcFlowMigration | `0xD155f706759A3d55ec70a8945370bd1fD8799870` |
+| USDC | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
+| USDT | `0x323e78f944A9a1FcF3a10efcC5319DBb0bB6e673` |
+
+### Sepolia
+
+| Contract | Address |
+|----------|---------|
+| ArcFlowRouter | `0x4542a2498877554789C9560DcAFb43e1e4839Dcd` |
+| ArcFlowStateManager | `0xe02F4213D6Bd17ECC1E911fb58fAf3dF97af4159` |
+| ArcFlowMigration | `0xA9e73a7b4b4314e12377D9EA2D567DdFa11BBc15` |
+| USDC | `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` |
+| USDT | `0x7169D38820dfd117C3FA1f22a697dBA58d90BA06` |
+
+### Arc Testnet
+
+| Contract | Address |
+|----------|---------|
+| ArcPayrollDistributor | `0x3E1318E75b4192f16941786992c94B12FFc2e85C` |
+| Gateway Minter | `0x0022222ABE238Cc2C7Bb1f21003F0a260052475B` |
+
+### Circle Gateway (Testnet)
+
+| Contract | Address |
+|----------|---------|
+| Gateway Wallet | `0x0077777d7EBA4688BDeF3E311b846F25870A19B9` |
+| Gateway Minter | `0x0022222ABE238Cc2C7Bb1f21003F0a260052475B` |
 
 ## API Endpoints
 
@@ -66,7 +90,7 @@ Without an API key, public RPCs are used as fallback.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/health` | GET | Service status, last cron result, last APY update |
+| `/health` | GET | Service status, cron results, APY data |
 
 ### Chat
 
@@ -76,7 +100,7 @@ Without an API key, public RPCs are used as fallback.
 | `/api/session/:sessionId` | GET | Get session payroll state |
 | `/api/yields` | GET | Top 10 USDC yields from DefiLlama |
 
-### APY Monitoring
+### APY & Rebalancing
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -85,55 +109,106 @@ Without an API key, public RPCs are used as fallback.
 | `/api/apy/update` | POST | Force immediate APY update |
 | `/api/rebalance/history` | GET | Rebalancing operation history |
 
-### Yellow Network (Multi-Chain)
+### Yellow Network
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/yellow/chains` | GET | List all supported chains |
-| `/api/yellow/balance/:address` | GET | Get USDC balance (add `?chainId=X` for specific chain) |
+| `/api/yellow/balance/:address` | GET | USDC balance (`?chainId=X` for specific) |
 | `/api/yellow/register-batch` | POST | Register incoming bridged funds |
 | `/api/yellow/cache-recipients` | POST | Cache recipient data for payroll |
 | `/api/yellow/chunk-batch` | POST | Chunk batch into individual payments |
-| `/api/yellow/pending-batches` | GET | Get pending batches (add `?chainId=X` to filter) |
+| `/api/yellow/pending-batches` | GET | Get pending batches |
 | `/api/yellow/cross-chain-transfer` | POST | Generate cross-chain transfer params |
 
 ## Cron Jobs
 
 ### Payroll Execution (every 60s)
-- Checks for ready payrolls via `getReadyPayrolls()`
-- Executes batch withdrawal via `executeReadyPayrolls()`
-- Bridges funds to Circle Gateway for distribution
+
+Runs on all configured chains:
+1. Calls `getReadyPayrolls()` on each chain's router
+2. Executes `executeReadyPayrolls()` for matured payrolls
+3. Bridges funds to Circle Gateway for distribution
 
 ### APY Monitoring (every 6 hours)
-- Fetches USDC yields from DefiLlama API
-- Updates on-chain StateManager via `batchUpdateChainApy()`
-- Checks rebalancing opportunities (APY diff > 0.5%)
+
+1. Fetches USDC yields from DefiLlama API
+2. Updates all chains' StateManagers via `batchUpdateChainApy()`
+3. Checks migration opportunities on each chain
+4. Triggers `migrateOut()` when APY diff > 0.5%
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      ArcFlow Agent                          │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
-│  │ PayrollCron │  │ APY Monitor │  │ Yellow Chunking     │ │
-│  │             │  │             │  │                     │ │
-│  │ - 60s tick  │  │ - 6hr tick  │  │ - Register batches  │ │
-│  │ - Execute   │  │ - DefiLlama │  │ - Cache recipients  │ │
-│  │   payrolls  │  │ - Update    │  │ - Chunk & sign      │ │
-│  │             │  │   on-chain  │  │ - Multi-chain       │ │
-│  └──────┬──────┘  └──────┬──────┘  └──────────┬──────────┘ │
-│         │                │                     │            │
-│         ▼                ▼                     ▼            │
-│  ┌─────────────────────────────────────────────────────────┐│
-│  │                   Contract Service                      ││
-│  │  - ArcFlowRouter interaction                           ││
-│  │  - StateManager updates                                ││
-│  │  - Multi-chain RPC clients                             ││
-│  └─────────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                        ArcFlow Agent                             │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌───────────────┐  │
+│  │   PayrollCron    │  │   APY Monitor    │  │   Migration   │  │
+│  │                  │  │                  │  │   Checker     │  │
+│  │ - Multi-chain    │  │ - DefiLlama API  │  │               │  │
+│  │ - 60s interval   │  │ - 6hr interval   │  │ - APY diff    │  │
+│  │ - Auto-execute   │  │ - Update all     │  │   > 0.5%      │  │
+│  │                  │  │   StateManagers  │  │ - migrateOut  │  │
+│  └────────┬─────────┘  └────────┬─────────┘  └───────┬───────┘  │
+│           │                     │                     │          │
+│           ▼                     ▼                     ▼          │
+│  ┌──────────────────────────────────────────────────────────────┐│
+│  │                    Multi-Chain Clients                       ││
+│  │                                                              ││
+│  │  Base Sepolia ◄──► Sepolia ◄──► Arc Testnet                 ││
+│  │  (Router)          (Router)      (Distributor)              ││
+│  │  (Migration)       (Migration)   (Gateway)                  ││
+│  │  (StateManager)    (StateManager)                           ││
+│  └──────────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────┘
 ```
+
+## File Structure
+
+```
+agent/
+├── src/
+│   ├── index.ts          # Express server entry point
+│   ├── config.ts         # Multi-chain RPC configuration
+│   ├── cron.ts           # Multi-chain PayrollCron
+│   ├── contracts.ts      # Contract interaction service
+│   ├── defillama.ts      # DefiLlama yield API
+│   ├── yellow.ts         # Yellow Network service
+│   ├── addresses.json    # Deployed contract addresses
+│   ├── abis.json         # Contract ABIs
+│   └── routes/
+│       └── chat.ts       # OpenAI chat router
+├── package.json
+├── tsconfig.json
+└── README.md
+```
+
+## Configuration Files
+
+### addresses.json
+
+Contains deployed contract addresses for all chains:
+- `baseSepolia` - Router, StateManager, Migration, USDC, USDT
+- `sepolia` - Router, StateManager, Migration, USDC, USDT
+- `arcTestnet` - Distributor, Gateway Minter
+
+### abis.json
+
+Contract ABI definitions:
+- `router` - ArcFlowRouter functions
+- `stateManager` - ArcFlowStateManager functions
+- `migration` - ArcFlowMigration functions
+- `distributor` - ArcPayrollDistributor functions
+- `erc20` - Standard ERC20 functions
+
+### config.ts
+
+RPC URL configuration with Alchemy support:
+- Automatic Alchemy URL generation with API key
+- Public RPC fallbacks for each chain
+- Chain ID constants
 
 ## API Examples
 
@@ -143,65 +218,16 @@ Without an API key, public RPCs are used as fallback.
 curl -X POST http://localhost:3001/api/chat \
   -H "Content-Type: application/json" \
   -d '{
-    "message": "I want to set up a payroll for January 31st",
+    "message": "Set up payroll for January 31st",
     "sessionId": "user-123",
     "userAddress": "0x..."
   }'
 ```
 
-**Response:**
-```json
-{
-  "response": "I've set the payroll date to January 31st, 2025...",
-  "sessionId": "user-123",
-  "state": {
-    "hasPayrollDate": true,
-    "hasRecipients": false,
-    "recipientCount": 0,
-    "totalAmount": null
-  }
-}
-```
-
-### Register Batch Funds
+### Force APY Update
 
 ```bash
-curl -X POST http://localhost:3001/api/yellow/register-batch \
-  -H "Content-Type: application/json" \
-  -d '{
-    "payrollId": "1",
-    "provider": "0x...",
-    "totalAmount": "100000000000",
-    "payrollDate": "1735689600",
-    "sourceChainId": "84532",
-    "targetChainId": "11155111",
-    "bridgeTxHash": "0x..."
-  }'
-```
-
-### Cache Recipients
-
-```bash
-curl -X POST http://localhost:3001/api/yellow/cache-recipients \
-  -H "Content-Type: application/json" \
-  -d '{
-    "payrollId": "1",
-    "recipients": [
-      { "wallet": "0x1234...", "amount": "5000000000" },
-      { "wallet": "0x5678...", "amount": "4500000000" }
-    ]
-  }'
-```
-
-### Chunk Batch
-
-```bash
-curl -X POST http://localhost:3001/api/yellow/chunk-batch \
-  -H "Content-Type: application/json" \
-  -d '{
-    "payrollId": "1",
-    "targetChainId": "11155111"
-  }'
+curl -X POST http://localhost:3001/api/apy/update
 ```
 
 ### Get Multi-Chain Balance
@@ -214,119 +240,18 @@ curl http://localhost:3001/api/yellow/balance/0x1234...
 curl "http://localhost:3001/api/yellow/balance/0x1234...?chainId=84532"
 ```
 
-### Force APY Update
+## Migration Flow
 
-```bash
-curl -X POST http://localhost:3001/api/apy/update
-```
+When APY difference between chains exceeds 0.5%:
 
-### Cross-Chain Transfer
-
-```bash
-curl -X POST http://localhost:3001/api/yellow/cross-chain-transfer \
-  -H "Content-Type: application/json" \
-  -d '{
-    "fromChainId": "84532",
-    "toChainId": "11155111",
-    "amount": "1000000000",
-    "recipient": "0x..."
-  }'
-```
-
-## Conversation Workflows
-
-### 1. Create New Payroll
-
-```
-User: "I want to set up payroll for January 31st"
-Agent: Sets payroll date
-
-User: "Here are my employees:
-address,amount
-0xABC...,5000
-0xDEF...,3000"
-Agent: Parses CSV, shows totals and expected yield
-
-User: "Generate the transactions"
-Agent: Returns approval + deposit transaction data
-```
-
-### 2. Execute Ready Payrolls
-
-```
-User: "Check if any payrolls are ready"
-Agent: Checks on-chain for matured payrolls
-
-User: "Execute them"
-Agent: Returns transaction to execute and bridge funds
-```
-
-### 3. Withdraw After Distribution
-
-```
-User: "Check my withdrawable balance"
-Agent: Queries Yellow Network Custody Contract
-
-User: "Withdraw 1000 USDC"
-Agent: Returns withdrawal transaction data
-```
-
-## AI Tool Functions
-
-The agent can execute these functions automatically based on conversation:
-
-| Function | Description |
-|----------|-------------|
-| `set_payroll_date` | Set distribution date |
-| `parse_csv_recipients` | Parse employee wallet/amount CSV |
-| `get_expected_yield` | Fetch DeFi yields from DefiLlama |
-| `calculate_expected_return` | Estimate returns for deposit period |
-| `get_approval_transaction` | Generate USDC approval tx |
-| `get_deposit_transaction` | Generate deposit tx |
-| `get_user_positions` | Fetch user's LP positions |
-| `get_usdc_balance` | Check wallet USDC balance |
-| `get_ready_payrolls` | List payrolls ready to execute |
-| `get_execute_payrolls_transaction` | Generate execution tx |
-| `get_withdrawable_balance` | Check Yellow Network balance |
-| `get_withdrawal_transaction` | Generate withdrawal tx |
-
-## Contract Addresses
-
-### Base Sepolia
-
-| Contract | Address |
-|----------|---------|
-| ArcFlowRouter | `0x3734E5E2Ac678c513C9Ed47A040a9E7Fd83b64C7` |
-| ArcFlowStateManager | `0x8B0ED3534D5eaa9D19F48C01b9c401eb2635C164` |
-| USDC | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
-| USDT | `0x323e78f944A9a1FcF3a10efcC5319DBb0bB6e673` |
-| Gateway Wallet | `0x0077777d7EBA4688BDeF3E311b846F25870A19B9` |
-
-### Arc Testnet
-
-| Contract | Address |
-|----------|---------|
-| ArcPayrollDistributor | `0x4c3526d71365064e24a755aab161e00cfa243649` |
-| Gateway Minter | `0x0022222ABE238Cc2C7Bb1f21003F0a260052475B` |
-
-## File Structure
-
-```
-agent/
-├── src/
-│   ├── index.ts          # Express server entry point
-│   ├── config.ts         # Alchemy RPC configuration
-│   ├── cron.ts           # PayrollCron with APY monitoring
-│   ├── contracts.ts      # Contract interaction service
-│   ├── defillama.ts      # DefiLlama yield API
-│   ├── yellow.ts         # Multi-chain Yellow Network service
-│   ├── addresses.json    # Deployed contract addresses
-│   └── routes/
-│       └── chat.ts       # OpenAI chat router
-├── package.json
-├── tsconfig.json
-└── README.md
-```
+1. **Detection**: Cron detects better yield on another chain
+2. **Validation**: Checks payroll isn't too close to execution date
+3. **Migration Out**: Calls `migration.migrateOut(payrollId, targetChainId)`
+   - Removes liquidity from current chain
+   - Bridges USDC via Circle Gateway
+4. **Migration In**: On target chain, `migration.migrateIn()` receives funds
+   - Re-adds liquidity on higher-yield chain
+   - Updates position tracking
 
 ## Development
 

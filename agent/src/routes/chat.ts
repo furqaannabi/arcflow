@@ -2,9 +2,9 @@ import { Router, Request, Response } from "express";
 import OpenAI from "openai";
 import { parse } from "csv-parse/sync";
 import { parseUnits, type Address } from "viem";
-import { ContractService, type PayrollRecipient } from "../contracts.js";
-import { DefiLlamaService } from "../defillama.js";
-import { YellowNetworkService } from "../yellow.js";
+import { ContractService, type PayrollRecipient } from "../contracts";
+import { DefiLlamaService } from "../defillama";
+import { YellowNetworkService } from "../yellow";
 
 const router = Router();
 

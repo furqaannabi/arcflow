@@ -15,7 +15,7 @@ import {
 import { sepolia, baseSepolia } from "viem/chains";
 import type { Chain } from "viem/chains";
 import { privateKeyToAccount, signMessage } from "viem/accounts";
-import { getAlchemyRpcUrls, type RpcConfig } from "./config.js";
+import { getAlchemyRpcUrls, type RpcConfig } from "./config";
 import addressesJson from "./addresses.json" with { type: "json" };
 
 // Arc Testnet chain definition
