@@ -1,32 +1,31 @@
-import { useState, useRef } from "react";
+import { useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { Upload, Loader2 } from "lucide-react";
+import { Upload } from "lucide-react";
 
 interface CSVUploadProps {
-  onUpload: (fileContent: string) => Promise<void>;
+  onFilesSelect: (files: File[]) => void;
   disabled?: boolean;
 }
 
-export default function CSVUpload({ onUpload, disabled }: CSVUploadProps) {
-  const [isUploading, setIsUploading] = useState(false);
+export default function CSVUpload({ onFilesSelect, disabled }: CSVUploadProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    // Reset input so same file can be selected again
-    e.target.value = "";
-
-    try {
-      setIsUploading(true);
-      const text = await file.text();
-      await onUpload(text);
-    } catch (error) {
-      console.error("Failed to upload file:", error);
-    } finally {
-      setIsUploading(false);
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    
+    // Basic validation
+    const validFiles = files.filter(file => file.name.endsWith('.csv'));
+    
+    if (validFiles.length !== files.length) {
+      alert("Some files were skipped because they are not CSVs");
     }
+
+    if (validFiles.length > 0) {
+      onFilesSelect(validFiles);
+    }
+    
+    e.target.value = ""; // Reset input
   };
 
   return (
@@ -37,19 +36,16 @@ export default function CSVUpload({ onUpload, disabled }: CSVUploadProps) {
         onChange={handleFileChange}
         accept=".csv"
         className="hidden"
+        multiple
       />
       <Button
         variant="outline"
-        disabled={disabled || isUploading}
+        disabled={disabled}
         onClick={() => fileInputRef.current?.click()}
-        className="flex items-center gap-2 h-full rounded-xl px-6 border-gray-200 text-gray-700 bg-white hover:bg-gray-50 shadow-sm"
+        className="flex items-center gap-2 h-full rounded-xl px-4 border-gray-200 text-gray-700 bg-white hover:bg-gray-50 shadow-sm shrink-0"
       >
-        {isUploading ? (
-          <Loader2 className="w-5 h-5 animate-spin" />
-        ) : (
-          <Upload className="w-5 h-5" />
-        )}
-        <span className="font-medium">Upload CSV</span>
+        <Upload className="w-5 h-5" />
+        <span className="font-medium hidden sm:inline">Upload CSV</span>
       </Button>
     </>
   );

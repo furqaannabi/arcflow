@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Bot } from "lucide-react";
+import { Send, Bot, FileText, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import ChatMessage from "@/components/chat/ChatMessage";
@@ -21,6 +21,7 @@ export default function AgentChat() {
     { role: "assistant", content: "Hello! I'm ArcFlow Agent. I can help you manage your payrolls. You can ask me to set a payroll date, calculate yields, or upload an employee CSV." }
   ]);
   const [input, setInput] = useState("");
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [sessionId] = useState(() => "session-" + Math.random().toString(36).substring(7));
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -67,43 +68,55 @@ export default function AgentChat() {
     }
   };
 
-  const handleCSVUpload = async (fileContent: string) => {
-    const systemMsg: Message = { role: "system", content: "Uploading CSV..." };
-    setMessages((prev) => [...prev, systemMsg]);
+  const handleCSVUpload = async (files: File[]) => {
     setIsLoading(true);
+    setSelectedFiles([]); // Clear selection immediately
 
-    try {
-      const response = await fetch(`${AGENT_API_URL}/api/upload-csv`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          csvData: fileContent,
-          sessionId,
-        }),
-      });
+    for (const file of files) {
+        const systemMsg: Message = { role: "system", content: `Uploading ${file.name}...` };
+        setMessages((prev) => [...prev, systemMsg]);
 
-      const data = await response.json();
+        try {
+        const fileContent = await file.text();
+        
+        // Basic Validation: Check for headers
+        const firstLine = fileContent.split('\n')[0].toLowerCase();
+        if (!firstLine.includes('address') || !firstLine.includes('amount')) {
+            throw new Error(`Invalid CSV format in ${file.name}. Please ensure headers 'address' and 'amount' exist.`);
+        }
 
-      if (data.error) {
-        throw new Error(data.error);
-      }
+        const response = await fetch(`${AGENT_API_URL}/api/upload-csv`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+            csvData: fileContent,
+            sessionId,
+            }),
+        });
 
-      const responseText = data.success 
-        ? `Successfully parsing CSV. Found ${data.recipientCount} recipients. Total: ${data.totalAmountUsdc} USDC.`
-        : "Failed to parse CSV.";
+        const data = await response.json();
 
-      // Add a hidden system message or just let the agent know via context? 
-      // Ideally we send this to the agent so it knows context, but /upload-csv is separate.
-      // The agent stores it in pendingPayrolls map, so the context IS updated on backend.
-      // We just show the result to user.
-      setMessages((prev) => [...prev, { role: "assistant", content: responseText }]);
+        if (data.error) {
+            throw new Error(data.error);
+        }
 
-    } catch (error) {
-      console.error("Upload error:", error);
-      setMessages((prev) => [...prev, { role: "system", content: "Error: Failed to upload CSV." }]);
-    } finally {
-      setIsLoading(false);
+        const responseText = data.success 
+            ? `Successfully parsed ${file.name}. Found ${data.recipientCount} recipients. Total: ${data.totalAmountUsdc} USDC.`
+            : `Failed to parse ${file.name}.`;
+
+        setMessages((prev) => [...prev, { role: "assistant", content: responseText }]);
+
+        } catch (error) {
+        console.error(`Upload error for ${file.name}:`, error);
+        setMessages((prev) => [...prev, { role: "system", content: `Error: ${(error as Error).message || "Failed to upload CSV."}` }]);
+        }
     }
+    
+    setIsLoading(false);
+  };
+
+  const removeFile = (index: number) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
   };
 
   return (
@@ -156,28 +169,57 @@ export default function AgentChat() {
 
         {/* Input Area */}
         <div className="bg-white border-t border-gray-100 p-6 shrink-0">
-          <div className="max-w-5xl mx-auto w-full flex gap-4">
-            <CSVUpload onUpload={handleCSVUpload} disabled={isLoading} />
+          <div className="max-w-5xl mx-auto w-full flex flex-col gap-3">
+            {selectedFiles.length > 0 && (
+              <div className="flex flex-wrap gap-2 animate-in fade-in slide-in-from-bottom-2">
+                {selectedFiles.map((file, index) => (
+                    <div key={index} className="flex items-center gap-2 bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg border border-blue-100 text-sm">
+                        <div className="p-1 bg-white rounded-md">
+                        <FileText className="w-4 h-4 text-blue-600" />
+                        </div>
+                        <span className="font-medium max-w-[200px] truncate">{file.name}</span>
+                        <span className="text-blue-400 text-xs">({(file.size / 1024).toFixed(1)} KB)</span>
+                        <button 
+                        onClick={() => removeFile(index)}
+                        className="ml-2 hover:bg-blue-100 p-1 rounded-full transition-colors"
+                        >
+                        <X className="w-3 h-3" />
+                        </button>
+                    </div>
+                ))}
+              </div>
+            )}
             
-            <form 
-              className="flex-1 flex gap-3"
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleSendMessage();
-              }}
-            >
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask about payroll, yields, or generate a transaction..."
-                className="flex-1 px-6 py-4 text-base border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm"
-                disabled={isLoading}
+            <div className="flex gap-4">
+              <CSVUpload 
+                onFilesSelect={(files) => setSelectedFiles(prev => [...prev, ...files])} 
+                disabled={isLoading} 
               />
-              <Button type="submit" disabled={isLoading || !input.trim()} className="bg-blue-600 hover:bg-blue-700 h-full w-14 rounded-xl">
-                <Send className="w-5 h-5" />
-              </Button>
-            </form>
+              
+              <form 
+                className="flex-1 flex gap-3"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (selectedFiles.length > 0) {
+                    handleCSVUpload(selectedFiles);
+                  } else {
+                    handleSendMessage();
+                  }
+                }}
+              >
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder={selectedFiles.length > 0 ? "Add a message with your files..." : "Ask about payroll, yields, or generate a transaction..."}
+                  className="flex-1 px-6 py-4 text-base border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm"
+                  disabled={isLoading}
+                />
+                <Button type="submit" disabled={isLoading || (!input.trim() && selectedFiles.length === 0)} className="bg-blue-600 hover:bg-blue-700 h-full w-14 rounded-xl">
+                  <Send className="w-5 h-5" />
+                </Button>
+              </form>
+            </div>
           </div>
         </div>
       </div>
