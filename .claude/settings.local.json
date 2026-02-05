@@ -7,7 +7,8 @@
       "Bash(npm install)",
       "Bash(npm run build:*)",
       "WebFetch(domain:docs.yellow.org)",
-      "Bash(forge build:*)"
+      "Bash(forge build:*)",
+      "Bash(npm run dev:*)"
     ]
   }
 }

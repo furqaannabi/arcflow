@@ -10,10 +10,10 @@ import {
   parseAbiParameters,
 } from "viem";
 import { privateKeyToAccount, signMessage } from "viem/accounts";
-import { sepolia } from "viem/chains";
+import { baseSepolia } from "viem/chains";
 
 // Contract addresses
-const ROUTER_ADDRESS = "0x466cb61cda7e16f3e66c45762b825808cd689feb" as Address;
+const ROUTER_ADDRESS = "0x3734E5E2Ac678c513C9Ed47A040a9E7Fd83b64C7" as Address;
 const DISTRIBUTOR_ADDRESS = "0x0000000000000000000000000000000000000000" as Address; // Set after deployment on Arc
 
 // Arc Chain config (placeholder - update with actual Arc Chain)
@@ -132,7 +132,7 @@ export class PayrollCron {
    */
   async checkReadyPayrolls(): Promise<bigint[]> {
     const client = createPublicClient({
-      chain: sepolia,
+      chain: baseSepolia,
       transport: http(this.rpcUrl),
     });
 
@@ -157,7 +157,7 @@ export class PayrollCron {
 
     const walletClient = createWalletClient({
       account,
-      chain: sepolia,
+      chain: baseSepolia,
       transport: http(this.rpcUrl),
     });
 

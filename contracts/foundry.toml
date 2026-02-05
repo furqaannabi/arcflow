@@ -2,7 +2,10 @@
 bytecode_hash = "none"
 evm_version = "cancun"
 ffi = true
-fs_permissions = [{access = "read-write", path = ".forge-snapshots/"}]
+fs_permissions = [
+    {access = "read-write", path = ".forge-snapshots/"},
+    {access = "write", path = "../agent/src/addresses.json"}
+]
 libs = ["lib"]
 out = "out"
 auto_detect_solc = true
@@ -15,7 +18,7 @@ lint_on_build = false
 
 # Network configurations
 [rpc_endpoints]
-baseSepolia = "https://sepolia.basescan.org"
+baseSepolia = "https://base-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY}"
 sepolia = "https://1rpc.io/sepolia"
 arc = "https://rpc.testnet.arc.network"
 

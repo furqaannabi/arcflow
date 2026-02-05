@@ -5,16 +5,15 @@ import {
   parseUnits,
   formatUnits,
   type Address,
-  type PublicClient,
 } from "viem";
-import { sepolia } from "viem/chains";
+import { baseSepolia } from "viem/chains";
+import addressesJson from "./addresses.json" with { type: "json" };
 
-// Contract addresses on Sepolia (from foundry deployment)
 const ADDRESSES = {
-  router: "0x466cb61cda7e16f3e66c45762b825808cd689feb" as Address,
-  stateManager: "0x83c29b0c971b649f60aff89b7878fb6c0c712dfe" as Address,
-  usdc: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238" as Address,
-  usdt: "0x7169D38820dfd117C3FA1f22a697dBA58d90BA06" as Address,
+  router: addressesJson.baseSepolia.router as Address,
+  stateManager: addressesJson.baseSepolia.stateManager as Address,
+  usdc: addressesJson.baseSepolia.usdc as Address,
+  usdt: addressesJson.baseSepolia.usdt as Address,
 };
 
 // ABI fragments for the functions we need
@@ -165,11 +164,11 @@ export interface LPPosition {
 }
 
 export class ContractService {
-  private client: PublicClient;
+  private client;
 
   constructor(rpcUrl?: string) {
     this.client = createPublicClient({
-      chain: sepolia,
+      chain: baseSepolia,
       transport: http(rpcUrl),
     });
   }

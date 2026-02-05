@@ -10,7 +10,7 @@ const router = Router();
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
-  baseURL: "https://ai.googleapis.com/v1beta/openai/",
+  baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
 });
 
 const contractService = new ContractService(process.env.RPC_URL);
@@ -564,7 +564,7 @@ router.post("/chat", async (req: Request, res: Response) => {
 
     // Call OpenAI with tools
     let response = await openai.chat.completions.create({
-      model: "gpt-4-turbo-preview",
+      model: "gemini-2.5-flash",
       messages,
       tools,
       tool_choice: "auto",
@@ -594,7 +594,7 @@ router.post("/chat", async (req: Request, res: Response) => {
 
       // Get next response
       response = await openai.chat.completions.create({
-        model: "gpt-4-turbo-preview",
+        model: "gemini-2.5-flash",
         messages,
         tools,
         tool_choice: "auto",

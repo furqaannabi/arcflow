@@ -1,0 +1,8 @@
+{
+  "baseSepolia": {
+    "router": "0x3734E5E2Ac678c513C9Ed47A040a9E7Fd83b64C7",
+    "stateManager": "0x8B0ED3534D5eaa9D19F48C01b9c401eb2635C164",
+    "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    "usdt": "0x323e78f944A9a1FcF3a10efcC5319DBb0bB6e673"
+  }
+}

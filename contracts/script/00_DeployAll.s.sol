@@ -15,11 +15,10 @@ import {ArcFlowStateManager} from "../src/ArcFlowStateManager.sol";
 contract DeployAllScript is Script {
     // Sepolia addresses
     address constant SEPOLIA_POOL_MANAGER =
-        0x8C4BcBE6b9eF47855f97E675296FA3F6fafa5F1A;
-    address constant SEPOLIA_USDC = 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238;
-    address constant SEPOLIA_USDT = 0x7169D38820dfd117C3FA1f22a697dBA58d90BA06;
-    address constant GATEWAY_WALLET =
-        0x0022222ABE238Cc2C7Bb1f21003F0a260052475B;
+        0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408;
+    address constant SEPOLIA_USDC = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
+    address constant SEPOLIA_USDT = 0x323e78f944A9a1FcF3a10efcC5319DBb0bB6e673;
+    address constant GATEWAY_WALLET = 0x0077777d7EBA4688BDeF3E311b846F25870A19B9;
 
     // Circle Gateway domains
     uint32 constant SEPOLIA_CIRCLE_DOMAIN = 0; // Ethereum testnet
@@ -101,5 +100,23 @@ contract DeployAllScript is Script {
         console.log("StateManager:", address(stateManager));
         console.log("Router:", address(router));
         console.log("Chain ID:", block.chainid);
+
+        // Write addresses to agent config
+        _writeAgentAddresses(address(router), address(stateManager));
+    }
+
+    function _writeAgentAddresses(address router, address stateManager) internal {
+        string memory json = string.concat(
+            '{\n',
+            '  "baseSepolia": {\n',
+            '    "router": "', vm.toString(router), '",\n',
+            '    "stateManager": "', vm.toString(stateManager), '",\n',
+            '    "usdc": "', vm.toString(SEPOLIA_USDC), '",\n',
+            '    "usdt": "', vm.toString(SEPOLIA_USDT), '"\n',
+            '  }\n',
+            '}'
+        );
+        vm.writeFile("../agent/src/addresses.json", json);
+        console.log("Agent addresses.json updated");
     }
 }
