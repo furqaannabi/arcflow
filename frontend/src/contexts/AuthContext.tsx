@@ -43,6 +43,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [currentChain, setCurrentChain] = useState<SupportedChainKey>('baseSepolia'); // Default to Base Sepolia
   const [credential, setCredential] = useState<any>(null); // Store credential for chain switching
 
+  // Restore state on mount
+  React.useEffect(() => {
+    const storedConnected = localStorage.getItem('arcflow_connected');
+    const storedAddress = localStorage.getItem('arcflow_address');
+    
+    if (storedConnected === 'true' && storedAddress) {
+      setIsConnected(true);
+      setUserAddress(storedAddress);
+    }
+  }, []);
+
   const connect = useCallback(async (chainKey: SupportedChainKey = 'baseSepolia') => {
     try {
       // Get Circle credentials from env
@@ -71,7 +82,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           passkeyCredential = await toWebAuthnCredential({
             transport: passkeyTransport,
             mode: WebAuthnMode.Login,
-            username: `arcflow-user-${Date.now()}`,
+            username: `arcflow-user-${Date.now()}`, 
           });
           console.log('Logged in with existing passkey');
         } catch (loginError) {
@@ -117,7 +128,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUserAddress(address);
       setCurrentChain(chainKey);
       
+      // Persist state
+      localStorage.setItem('arcflow_connected', 'true');
+      localStorage.setItem('arcflow_address', address);
+
       console.log(`Successfully connected to ${selectedChain.chain.name} with address:`, address);
+      return passkeyCredential; 
     } catch (error) {
       console.error('Failed to connect wallet:', error);
       
@@ -133,6 +149,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [credential]);
 
   const switchChain = useCallback(async (chainKey: SupportedChainKey) => {
+    // If we have no credential but are "connected" (persisted state), we need to full reconnect
     if (!credential) {
       console.log('No credential in state, falling back to full connection flow...');
       await connect(chainKey);
@@ -171,10 +188,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.error('Failed to switch chain:', error);
       throw error;
     }
-  }, [credential]);
+  }, [credential, connect]);
 
   const sendTransaction = useCallback(async (tx: { to: string; data: string; value?: bigint }) => {
-    if (!credential) {
+    let activeCredential = credential;
+
+    // Check if we need to restore session
+    if (!activeCredential) {
+       console.log("Restoring session for transaction...");
+       // Re-run connect logic to get credential (will prompt user passkey)
+       activeCredential = await connect(currentChain);
+    }
+    
+    if (!activeCredential) {
       throw new Error("Wallet not connected");
     }
 
@@ -200,7 +226,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Create smart account
       const smartAccount = await toCircleSmartAccount({
         client: publicClient,
-        owner: toWebAuthnAccount({ credential }),
+        owner: toWebAuthnAccount({ credential: activeCredential }),
       });
 
       // Create bundler/wallet client
@@ -225,13 +251,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.error('Failed to send transaction:', error);
       throw error;
     }
-  }, [credential, currentChain]);
+  }, [credential, currentChain, connect]);
 
   const disconnect = useCallback(() => {
     setIsConnected(false);
     setUserAddress(null);
     setCredential(null);
     setCurrentChain('baseSepolia');
+    
+    localStorage.removeItem('arcflow_connected');
+    localStorage.removeItem('arcflow_address');
   }, []);
 
   return (
