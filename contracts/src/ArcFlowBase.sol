@@ -9,40 +9,29 @@ import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {ModifyLiquidityParams, SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {IGatewayWallet, IGatewayMinter} from "./interfaces/ICircleGateway.sol";
 import {ArcFlowStateManager} from "./ArcFlowStateManager.sol";
 import {LPPosition, CallbackData} from "./ArcFlowTypes.sol";
 
 /// @title ArcFlow Base
-/// @notice Base contract with storage and internal pool operations
 abstract contract ArcFlowBase is IUnlockCallback {
-    using SafeERC20 for IERC20;
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
 
-    // ============ Constants ============
-
     int24 internal constant TICK_LOWER = -887220;
     int24 internal constant TICK_UPPER = 887220;
-
-    // ============ Immutables ============
 
     IPoolManager public immutable poolManager;
     IERC20 public immutable usdc;
     IERC20 public immutable usdt;
     uint256 public immutable chainId;
 
-    // ============ Storage ============
-
     PoolKey public poolKey;
     PoolId public poolId;
-
     IGatewayWallet public gatewayWallet;
     IGatewayMinter public gatewayMinter;
     ArcFlowStateManager public stateManager;
-
     address public agent;
     address public owner;
 
@@ -50,11 +39,8 @@ abstract contract ArcFlowBase is IUnlockCallback {
     mapping(address => uint256[]) public providerPayrolls;
     uint256[] public activePayrollIds;
     mapping(uint256 => uint256) public payrollIdIndex;
-
     uint256 public totalLiquidity;
     uint256 public nextPayrollId;
-
-    // ============ Constructor ============
 
     constructor(
         IPoolManager _poolManager,
@@ -69,251 +55,111 @@ abstract contract ArcFlowBase is IUnlockCallback {
         gatewayWallet = IGatewayWallet(_gatewayWallet);
         stateManager = ArcFlowStateManager(_stateManager);
         chainId = block.chainid;
-
         usdc = IERC20(Currency.unwrap(_existingPoolKey.currency0));
         usdt = IERC20(Currency.unwrap(_existingPoolKey.currency1));
     }
 
-    // ============ Modifiers ============
-
     modifier onlyAgent() {
-        require(msg.sender == agent || msg.sender == owner, "Unauthorized");
+        require(msg.sender == agent || msg.sender == owner, "Unauth");
         _;
     }
 
     modifier onlyOwner() {
-        require(msg.sender == owner, "Unauthorized");
+        require(msg.sender == owner, "Unauth");
         _;
     }
 
-    // ============ Internal: Swap ============
-
-    function _swap(
-        bool zeroForOne,
-        uint256 amountIn
-    ) internal returns (uint256 amountOut) {
-        bytes memory swapData = abi.encode(zeroForOne, amountIn);
-        CallbackData memory data = CallbackData({
-            action: 2,
-            sender: address(this),
-            data: swapData
-        });
-        bytes memory result = poolManager.unlock(abi.encode(data));
-        amountOut = abi.decode(result, (uint256));
+    function _swap(bool zeroForOne, uint256 amountIn) internal returns (uint256) {
+        bytes memory result = poolManager.unlock(abi.encode(CallbackData(2, address(this), abi.encode(zeroForOne, amountIn))));
+        return abi.decode(result, (uint256));
     }
 
-    // ============ Internal: Add Liquidity ============
-
-    function _addLiquidity(
-        uint256 amount0,
-        uint256 amount1
-    ) internal returns (uint128 liquidity) {
-        liquidity = uint128(amount0 < amount1 ? amount0 : amount1);
-
-        ModifyLiquidityParams memory params = ModifyLiquidityParams({
-            tickLower: TICK_LOWER,
-            tickUpper: TICK_UPPER,
-            liquidityDelta: int256(uint256(liquidity)),
-            salt: bytes32(0)
-        });
-
-        CallbackData memory data = CallbackData({
-            action: 0,
-            sender: address(this),
-            data: abi.encode(params)
-        });
-
-        poolManager.unlock(abi.encode(data));
+    function _addLiquidity(uint256 a0, uint256 a1) internal returns (uint128 liq) {
+        liq = uint128(a0 < a1 ? a0 : a1);
+        poolManager.unlock(abi.encode(CallbackData(0, address(this), abi.encode(ModifyLiquidityParams(TICK_LOWER, TICK_UPPER, int256(uint256(liq)), bytes32(0))))));
     }
 
-    // ============ Internal: Remove Liquidity ============
-
-    function _removeLiquidity(
-        uint128 liquidity
-    ) internal returns (uint256 amount0, uint256 amount1) {
-        ModifyLiquidityParams memory params = ModifyLiquidityParams({
-            tickLower: TICK_LOWER,
-            tickUpper: TICK_UPPER,
-            liquidityDelta: -int256(uint256(liquidity)),
-            salt: bytes32(0)
-        });
-
-        CallbackData memory data = CallbackData({
-            action: 1,
-            sender: address(this),
-            data: abi.encode(params)
-        });
-
-        bytes memory result = poolManager.unlock(abi.encode(data));
-        (amount0, amount1) = abi.decode(result, (uint256, uint256));
+    function _removeLiquidity(uint128 liq) internal returns (uint256 a0, uint256 a1) {
+        bytes memory result = poolManager.unlock(abi.encode(CallbackData(1, address(this), abi.encode(ModifyLiquidityParams(TICK_LOWER, TICK_UPPER, -int256(uint256(liq)), bytes32(0))))));
+        (a0, a1) = abi.decode(result, (uint256, uint256));
     }
 
-    // ============ Internal Helpers ============
-
-    function _removePayroll(uint256 payrollId) internal {
-        uint256 index = payrollIdIndex[payrollId];
-        uint256 lastIndex = activePayrollIds.length - 1;
-
-        if (index != lastIndex) {
-            uint256 lastPayrollId = activePayrollIds[lastIndex];
-            activePayrollIds[index] = lastPayrollId;
-            payrollIdIndex[lastPayrollId] = index;
+    function _removePayroll(uint256 pid) internal {
+        uint256 idx = payrollIdIndex[pid];
+        uint256 last = activePayrollIds.length - 1;
+        if (idx != last) {
+            uint256 lastPid = activePayrollIds[last];
+            activePayrollIds[idx] = lastPid;
+            payrollIdIndex[lastPid] = idx;
         }
-
         activePayrollIds.pop();
-        delete payrollIdIndex[payrollId];
+        delete payrollIdIndex[pid];
     }
 
-    function _removeFromProviderPayrolls(
-        address provider,
-        uint256 payrollId
-    ) internal {
-        uint256[] storage payrolls = providerPayrolls[provider];
-        for (uint256 i = 0; i < payrolls.length; i++) {
-            if (payrolls[i] == payrollId) {
-                payrolls[i] = payrolls[payrolls.length - 1];
-                payrolls.pop();
+    function _removeFromProviderPayrolls(address provider, uint256 pid) internal {
+        uint256[] storage arr = providerPayrolls[provider];
+        for (uint256 i = 0; i < arr.length; i++) {
+            if (arr[i] == pid) {
+                arr[i] = arr[arr.length - 1];
+                arr.pop();
                 break;
             }
         }
     }
 
-    // ============ Unlock Callback ============
+    function unlockCallback(bytes calldata rawData) external override returns (bytes memory) {
+        require(msg.sender == address(poolManager), "Only PM");
+        CallbackData memory d = abi.decode(rawData, (CallbackData));
+        if (d.action == 0) return _handleAdd(d.data);
+        if (d.action == 1) return _handleRemove(d.data);
+        return _handleSwap(d.data);
+    }
 
-    function unlockCallback(
-        bytes calldata rawData
-    ) external override returns (bytes memory) {
-        require(msg.sender == address(poolManager), "Only PoolManager");
-
-        CallbackData memory data = abi.decode(rawData, (CallbackData));
-
-        if (data.action == 0) {
-            return _handleAddLiquidity(data.data);
-        } else if (data.action == 1) {
-            return _handleRemoveLiquidity(data.data);
-        } else if (data.action == 2) {
-            return _handleSwap(data.data);
-        }
-
+    function _handleAdd(bytes memory data) internal returns (bytes memory) {
+        (BalanceDelta delta, ) = poolManager.modifyLiquidity(poolKey, abi.decode(data, (ModifyLiquidityParams)), "");
+        if (delta.amount0() < 0) { poolManager.sync(poolKey.currency0); usdc.transfer(address(poolManager), uint256(uint128(-delta.amount0()))); poolManager.settle(); }
+        if (delta.amount1() < 0) { poolManager.sync(poolKey.currency1); usdt.transfer(address(poolManager), uint256(uint128(-delta.amount1()))); poolManager.settle(); }
         return "";
     }
 
-    function _handleAddLiquidity(
-        bytes memory data
-    ) internal returns (bytes memory) {
-        ModifyLiquidityParams memory params = abi.decode(
-            data,
-            (ModifyLiquidityParams)
-        );
-        (BalanceDelta delta, ) = poolManager.modifyLiquidity(poolKey, params, "");
-
-        if (delta.amount0() < 0) {
-            uint256 amt = uint256(uint128(-delta.amount0()));
-            poolManager.sync(poolKey.currency0);
-            usdc.transfer(address(poolManager), amt);
-            poolManager.settle();
-        }
-        if (delta.amount1() < 0) {
-            uint256 amt = uint256(uint128(-delta.amount1()));
-            poolManager.sync(poolKey.currency1);
-            usdt.transfer(address(poolManager), amt);
-            poolManager.settle();
-        }
-        return "";
-    }
-
-    function _handleRemoveLiquidity(
-        bytes memory data
-    ) internal returns (bytes memory) {
-        ModifyLiquidityParams memory params = abi.decode(
-            data,
-            (ModifyLiquidityParams)
-        );
-        (BalanceDelta delta, ) = poolManager.modifyLiquidity(poolKey, params, "");
-
-        uint256 amt0 = 0;
-        uint256 amt1 = 0;
-
-        if (delta.amount0() > 0) {
-            amt0 = uint256(uint128(delta.amount0()));
-            poolManager.take(poolKey.currency0, address(this), amt0);
-        }
-        if (delta.amount1() > 0) {
-            amt1 = uint256(uint128(delta.amount1()));
-            poolManager.take(poolKey.currency1, address(this), amt1);
-        }
-        return abi.encode(amt0, amt1);
+    function _handleRemove(bytes memory data) internal returns (bytes memory) {
+        (BalanceDelta delta, ) = poolManager.modifyLiquidity(poolKey, abi.decode(data, (ModifyLiquidityParams)), "");
+        uint256 a0; uint256 a1;
+        if (delta.amount0() > 0) { a0 = uint256(uint128(delta.amount0())); poolManager.take(poolKey.currency0, address(this), a0); }
+        if (delta.amount1() > 0) { a1 = uint256(uint128(delta.amount1())); poolManager.take(poolKey.currency1, address(this), a1); }
+        return abi.encode(a0, a1);
     }
 
     function _handleSwap(bytes memory data) internal returns (bytes memory) {
-        (bool zeroForOne, uint256 amountIn) = abi.decode(data, (bool, uint256));
-
-        BalanceDelta delta = poolManager.swap(
-            poolKey,
-            SwapParams({
-                zeroForOne: zeroForOne,
-                amountSpecified: -int256(amountIn),
-                sqrtPriceLimitX96: zeroForOne
-                    ? 4295128740
-                    : 1461446703485210103287273052203988822378723970341
-            }),
-            ""
-        );
-
-        uint256 amountOut;
-
+        (bool zeroForOne, uint256 amtIn) = abi.decode(data, (bool, uint256));
+        BalanceDelta delta = poolManager.swap(poolKey, SwapParams(zeroForOne, -int256(amtIn), zeroForOne ? 4295128740 : 1461446703485210103287273052203988822378723970341), "");
+        uint256 out;
         if (zeroForOne) {
-            if (delta.amount0() < 0) {
-                uint256 amt = uint256(uint128(-delta.amount0()));
-                poolManager.sync(poolKey.currency0);
-                usdc.transfer(address(poolManager), amt);
-                poolManager.settle();
-            }
-            if (delta.amount1() > 0) {
-                amountOut = uint256(uint128(delta.amount1()));
-                poolManager.take(poolKey.currency1, address(this), amountOut);
-            }
+            if (delta.amount0() < 0) { poolManager.sync(poolKey.currency0); usdc.transfer(address(poolManager), uint256(uint128(-delta.amount0()))); poolManager.settle(); }
+            if (delta.amount1() > 0) { out = uint256(uint128(delta.amount1())); poolManager.take(poolKey.currency1, address(this), out); }
         } else {
-            if (delta.amount1() < 0) {
-                uint256 amt = uint256(uint128(-delta.amount1()));
-                poolManager.sync(poolKey.currency1);
-                usdt.transfer(address(poolManager), amt);
-                poolManager.settle();
-            }
-            if (delta.amount0() > 0) {
-                amountOut = uint256(uint128(delta.amount0()));
-                poolManager.take(poolKey.currency0, address(this), amountOut);
-            }
+            if (delta.amount1() < 0) { poolManager.sync(poolKey.currency1); usdt.transfer(address(poolManager), uint256(uint128(-delta.amount1()))); poolManager.settle(); }
+            if (delta.amount0() > 0) { out = uint256(uint128(delta.amount0())); poolManager.take(poolKey.currency0, address(this), out); }
         }
-
-        return abi.encode(amountOut);
+        return abi.encode(out);
     }
 
-    // ============ Ready Payrolls (View) ============
-
-    /// @notice Get all payroll IDs that are ready to execute
     function getReadyPayrolls() external view returns (uint256[] memory) {
-        uint256 count = 0;
+        uint256 cnt = 0;
         for (uint256 i = 0; i < activePayrollIds.length; i++) {
-            if (block.timestamp >= positions[activePayrollIds[i]].payrollDate) {
-                count++;
-            }
+            if (block.timestamp >= positions[activePayrollIds[i]].payrollDate) cnt++;
         }
-
-        uint256[] memory ready = new uint256[](count);
+        uint256[] memory r = new uint256[](cnt);
         uint256 idx = 0;
         for (uint256 i = 0; i < activePayrollIds.length; i++) {
             uint256 pid = activePayrollIds[i];
-            if (block.timestamp >= positions[pid].payrollDate) {
-                ready[idx++] = pid;
-            }
+            if (block.timestamp >= positions[pid].payrollDate) r[idx++] = pid;
         }
-        return ready;
+        return r;
     }
 
-    /// @notice Check if a specific payroll is ready
-    function isPayrollReady(uint256 payrollId) external view returns (bool) {
-        LPPosition memory pos = positions[payrollId];
-        return pos.liquidity > 0 && block.timestamp >= pos.payrollDate && pos.currentChainId == chainId;
+    function isPayrollReady(uint256 pid) external view returns (bool) {
+        LPPosition memory p = positions[pid];
+        return p.liquidity > 0 && block.timestamp >= p.payrollDate && p.currentChainId == chainId;
     }
 }

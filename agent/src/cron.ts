@@ -11,19 +11,19 @@ import {
   parseUnits,
 } from "viem";
 import { privateKeyToAccount, signMessage } from "viem/accounts";
-import { baseSepolia, arbitrumSepolia, sepolia } from "viem/chains";
+import { baseSepolia, sepolia } from "viem/chains";
 import { DefiLlamaService } from "./defillama.js";
 import addressesJson from "./addresses.json" with { type: "json" };
 
 // Contract addresses from config
 const ROUTER_ADDRESS = addressesJson.baseSepolia.router as Address;
 const STATE_MANAGER_ADDRESS = addressesJson.baseSepolia.stateManager as Address;
+const MIGRATION_ADDRESS = addressesJson.baseSepolia.migration as Address;
 const DISTRIBUTOR_ADDRESS = "0x0000000000000000000000000000000000000000" as Address; // Set after deployment on Arc
 
 // Supported chains for APY monitoring
 const SUPPORTED_CHAINS = [
   { id: 84532, name: "Base", defiLlamaName: "Base" },
-  { id: 421614, name: "Arbitrum", defiLlamaName: "Arbitrum" },
   { id: 11155111, name: "Sepolia", defiLlamaName: "Ethereum" },
 ] as const;
 
@@ -37,6 +37,13 @@ const ARC_CHAIN = {
 const ROUTER_ABI = [
   {
     name: "getReadyPayrolls",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256[]" }],
+  },
+  {
+    name: "getActivePayrollIds",
     type: "function",
     stateMutability: "view",
     inputs: [],
@@ -157,6 +164,43 @@ const STATE_MANAGER_ABI = [
     stateMutability: "view",
     inputs: [{ name: "payrollDate", type: "uint256" }],
     outputs: [{ name: "", type: "bool" }],
+  },
+] as const;
+
+const MIGRATION_ABI = [
+  {
+    name: "shouldMigrate",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "payrollId", type: "uint256" }],
+    outputs: [
+      { name: "migrate", type: "bool" },
+      { name: "targetChain", type: "uint256" },
+      { name: "apyDiff", type: "uint256" },
+    ],
+  },
+  {
+    name: "migrateOut",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "payrollId", type: "uint256" },
+      { name: "targetChainId", type: "uint256" },
+    ],
+    outputs: [{ name: "amount", type: "uint256" }],
+  },
+  {
+    name: "migrateIn",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "payrollId", type: "uint256" },
+      { name: "fromChainId", type: "uint256" },
+      { name: "amount", type: "uint256" },
+      { name: "attestation", type: "bytes" },
+      { name: "signature", type: "bytes" },
+    ],
+    outputs: [{ name: "newLiquidity", type: "uint128" }],
   },
 ] as const;
 
@@ -423,6 +467,50 @@ export class PayrollCron {
   }
 
   /**
+   * Check if a payroll should migrate using the migration contract
+   */
+  async shouldMigrate(payrollId: bigint): Promise<{ migrate: boolean; targetChain: bigint; apyDiff: bigint }> {
+    const client = createPublicClient({
+      chain: baseSepolia,
+      transport: http(this.rpcUrl),
+    });
+
+    const [migrate, targetChain, apyDiff] = await client.readContract({
+      address: MIGRATION_ADDRESS,
+      abi: MIGRATION_ABI,
+      functionName: "shouldMigrate",
+      args: [payrollId],
+    });
+
+    return { migrate, targetChain, apyDiff };
+  }
+
+  /**
+   * Execute migration out to target chain
+   */
+  async executeMigrateOut(payrollId: bigint, targetChainId: bigint): Promise<Hash> {
+    if (!this.privateKey) {
+      throw new Error("Private key not configured");
+    }
+
+    const account = privateKeyToAccount(this.privateKey as `0x${string}`);
+    const walletClient = createWalletClient({
+      account,
+      chain: baseSepolia,
+      transport: http(this.rpcUrl),
+    });
+
+    const hash = await walletClient.writeContract({
+      address: MIGRATION_ADDRESS,
+      abi: MIGRATION_ABI,
+      functionName: "migrateOut",
+      args: [payrollId, targetChainId],
+    });
+
+    return hash;
+  }
+
+  /**
    * Check active payrolls for rebalancing opportunities
    */
   async checkRebalancingOpportunities(): Promise<void> {
@@ -444,10 +532,57 @@ export class PayrollCron {
       const bestApyPercent = Number(bestChain.apy) / 100;
       console.log(`[REBALANCE] Best APY: ${bestApyPercent.toFixed(2)}% on chain ${bestChain.chainId}`);
 
-      // Get active payrolls from router
-      // Note: This would need to iterate through positions and check currentChainId
-      // For now, we log that rebalancing logic is ready
-      console.log("[REBALANCE] Rebalancing logic ready - awaiting multi-chain deployment");
+      // Check if migration contract is deployed
+      if (MIGRATION_ADDRESS === "0x0000000000000000000000000000000000000000") {
+        console.log("[REBALANCE] Migration contract not deployed yet");
+        return;
+      }
+
+      // Get all active payroll IDs from router
+      const activePayrollIds = await client.readContract({
+        address: ROUTER_ADDRESS,
+        abi: ROUTER_ABI,
+        functionName: "getActivePayrollIds",
+      }) as bigint[];
+
+      if (activePayrollIds.length === 0) {
+        console.log("[REBALANCE] No active payrolls to check");
+        return;
+      }
+
+      console.log(`[REBALANCE] Checking ${activePayrollIds.length} active payroll(s)...`);
+
+      // For each active payroll, check if it should migrate
+      for (const payrollId of activePayrollIds) {
+        try {
+          const result = await this.shouldMigrate(payrollId);
+          if (result.migrate) {
+            const apyDiffPercent = Number(result.apyDiff) / 100;
+            console.log(`[REBALANCE] Payroll #${payrollId} should migrate to chain ${result.targetChain} (APY diff: +${apyDiffPercent.toFixed(2)}%)`);
+
+            if (this.privateKey) {
+              const txHash = await this.executeMigrateOut(payrollId, result.targetChain);
+              console.log(`[REBALANCE] Migration initiated! TX: ${txHash}`);
+
+              this.rebalanceResults.push({
+                timestamp: new Date(),
+                payrollId,
+                fromChain: 84532, // Base Sepolia
+                toChain: Number(result.targetChain),
+                amount: BigInt(0), // Amount is returned in TX receipt
+                apyDiff: apyDiffPercent,
+                txHash,
+              });
+            }
+          }
+        } catch (error) {
+          // Position can't migrate or other error, skip
+          console.log(`[REBALANCE] Payroll #${payrollId} check failed: ${(error as Error).message}`);
+          continue;
+        }
+      }
+
+      console.log("[REBALANCE] Check complete");
 
     } catch (error) {
       console.error("[REBALANCE] Error:", error);

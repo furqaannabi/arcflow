@@ -12,6 +12,7 @@ import addressesJson from "./addresses.json" with { type: "json" };
 const ADDRESSES = {
   router: addressesJson.baseSepolia.router as Address,
   stateManager: addressesJson.baseSepolia.stateManager as Address,
+  migration: addressesJson.baseSepolia.migration as Address,
   usdc: addressesJson.baseSepolia.usdc as Address,
   usdt: addressesJson.baseSepolia.usdt as Address,
 };
@@ -115,6 +116,13 @@ const ROUTER_ABI = [
       },
     ],
   },
+  {
+    name: "getActivePayrollIds",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256[]" }],
+  },
 ] as const;
 
 const ERC20_ABI = [
@@ -144,6 +152,43 @@ const ERC20_ABI = [
     stateMutability: "view",
     inputs: [{ name: "account", type: "address" }],
     outputs: [{ name: "", type: "uint256" }],
+  },
+] as const;
+
+const MIGRATION_ABI = [
+  {
+    name: "shouldMigrate",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "payrollId", type: "uint256" }],
+    outputs: [
+      { name: "migrate", type: "bool" },
+      { name: "targetChain", type: "uint256" },
+      { name: "apyDiff", type: "uint256" },
+    ],
+  },
+  {
+    name: "migrateOut",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "payrollId", type: "uint256" },
+      { name: "targetChainId", type: "uint256" },
+    ],
+    outputs: [{ name: "amount", type: "uint256" }],
+  },
+  {
+    name: "migrateIn",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "payrollId", type: "uint256" },
+      { name: "fromChainId", type: "uint256" },
+      { name: "amount", type: "uint256" },
+      { name: "attestation", type: "bytes" },
+      { name: "signature", type: "bytes" },
+    ],
+    outputs: [{ name: "newLiquidity", type: "uint128" }],
   },
 ] as const;
 
@@ -275,6 +320,17 @@ export class ContractService {
     return ready as boolean;
   }
 
+  // Get all active payroll IDs
+  async getActivePayrollIds(): Promise<bigint[]> {
+    const ids = await this.client.readContract({
+      address: ADDRESSES.router,
+      abi: ROUTER_ABI,
+      functionName: "getActivePayrollIds",
+      args: [],
+    });
+    return ids as bigint[];
+  }
+
   // Generate calldata for executing ready payrolls
   generateExecuteReadyPayrollsCalldata(): {
     to: Address;
@@ -287,6 +343,62 @@ export class ContractService {
         abi: ROUTER_ABI,
         functionName: "executeReadyPayrolls",
         args: [],
+      }),
+    };
+  }
+
+  // Check if a payroll should migrate to a better yield chain
+  async shouldMigrate(payrollId: bigint): Promise<{
+    migrate: boolean;
+    targetChain: bigint;
+    apyDiff: bigint;
+  }> {
+    const [migrate, targetChain, apyDiff] = await this.client.readContract({
+      address: ADDRESSES.migration,
+      abi: MIGRATION_ABI,
+      functionName: "shouldMigrate",
+      args: [payrollId],
+    });
+    return { migrate, targetChain, apyDiff };
+  }
+
+  // Generate calldata for migrate out
+  generateMigrateOutCalldata(
+    payrollId: bigint,
+    targetChainId: bigint
+  ): {
+    to: Address;
+    data: string;
+  } {
+    const { encodeFunctionData } = require("viem");
+    return {
+      to: ADDRESSES.migration,
+      data: encodeFunctionData({
+        abi: MIGRATION_ABI,
+        functionName: "migrateOut",
+        args: [payrollId, targetChainId],
+      }),
+    };
+  }
+
+  // Generate calldata for migrate in
+  generateMigrateInCalldata(
+    payrollId: bigint,
+    fromChainId: bigint,
+    amount: bigint,
+    attestation: `0x${string}`,
+    signature: `0x${string}`
+  ): {
+    to: Address;
+    data: string;
+  } {
+    const { encodeFunctionData } = require("viem");
+    return {
+      to: ADDRESSES.migration,
+      data: encodeFunctionData({
+        abi: MIGRATION_ABI,
+        functionName: "migrateIn",
+        args: [payrollId, fromChainId, amount, attestation, signature],
       }),
     };
   }

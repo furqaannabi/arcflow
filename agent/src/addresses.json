@@ -1,22 +1,21 @@
 {
-  "circleGateway": {
-    "testnet": {
-      "gatewayWallet": "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
-      "gatewayMinter": "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B"
-    },
-    "mainnet": {
-      "gatewayWallet": "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
-      "gatewayMinter": "0x2222222d7164433c4C09B0b0D809a9b52C04C205"
-    }
-  },
   "baseSepolia": {
-    "router": "0x3734E5E2Ac678c513C9Ed47A040a9E7Fd83b64C7",
-    "stateManager": "0x8B0ED3534D5eaa9D19F48C01b9c401eb2635C164",
+    "router": "0xA07C9A5C26adefB97F99E6926b5812c2089A156D",
+    "stateManager": "0x50900c76101d5Fd11117417c32942aD246D5A166",
+    "migration": "0xD155f706759A3d55ec70a8945370bd1fD8799870",
     "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
     "usdt": "0x323e78f944A9a1FcF3a10efcC5319DBb0bB6e673"
   },
+  "sepolia": {
+    "router": "0x4542a2498877554789C9560DcAFb43e1e4839Dcd",
+    "stateManager": "0xe02F4213D6Bd17ECC1E911fb58fAf3dF97af4159",
+    "migration": "0xA9e73a7b4b4314e12377D9EA2D567DdFa11BBc15",
+    "usdc": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+    "usdt": "0x7169D38820dfd117C3FA1f22a697dBA58d90BA06"
+  },
   "arcTestnet": {
-    "distributor": "0x4c3526d71365064e24a755aab161e00cfa243649",
-    "gatewayMinter": "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B"
+    "distributor": "0x3E1318E75b4192f16941786992c94B12FFc2e85C",
+    "gatewayMinter": "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B",
+    "circleDomain": 9
   }
 }

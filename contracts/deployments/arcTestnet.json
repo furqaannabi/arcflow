@@ -1,0 +1,7 @@
+{
+  "arcTestnet": {
+    "distributor": "0x3E1318E75b4192f16941786992c94B12FFc2e85C",
+    "gatewayMinter": "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B",
+    "circleDomain": 9
+  }
+}

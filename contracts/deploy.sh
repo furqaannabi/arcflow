@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # ArcFlow Multi-Chain Deployment Script
-# Usage: ./deploy.sh [chain] [--verify]
-#   chain: baseSepolia, sepolia, arbitrumSepolia, arc, all
-#   --verify: verify contracts on block explorer
+# Usage: ./deploy.sh [chain] [--no-verify]
+#   chain: baseSepolia, sepolia, arc, all
+#   --no-verify: skip contract verification (verification enabled by default)
 
 set -e
 
@@ -13,10 +13,35 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Load environment from .env file
+load_env() {
+    if [ -f .env ]; then
+        echo -e "${GREEN}Loading .env file...${NC}"
+        # Convert Windows line endings to Unix if needed
+        if command -v sed &> /dev/null; then
+            sed -i 's/\r$//' .env 2>/dev/null || true
+        fi
+        set -a
+        source .env
+        set +a
+    elif [ -f ../.env ]; then
+        echo -e "${GREEN}Loading ../.env file...${NC}"
+        if command -v sed &> /dev/null; then
+            sed -i 's/\r$//' ../.env 2>/dev/null || true
+        fi
+        set -a
+        source ../.env
+        set +a
+    else
+        echo -e "${YELLOW}No .env file found, using environment variables${NC}"
+    fi
+}
+
 # Check environment
 check_env() {
     if [ -z "$PRIVATE_KEY" ]; then
         echo -e "${RED}Error: PRIVATE_KEY not set${NC}"
+        echo "Create a .env file with PRIVATE_KEY=0x..."
         exit 1
     fi
     if [ -z "$ALCHEMY_API_KEY" ]; then
@@ -34,11 +59,7 @@ deploy_source() {
 
     echo -e "${GREEN}Deploying to $chain...${NC}"
 
-    local cmd="forge script script/00_DeployAll.s.sol --rpc-url $chain --broadcast"
-
-    if [ "$verify" = "--verify" ]; then
-        cmd="$cmd --verify"
-    fi
+    local cmd="forge script script/00_DeployAll.s.sol --rpc-url $chain --broadcast $verify"
 
     eval $cmd
 
@@ -51,11 +72,7 @@ deploy_arc() {
 
     echo -e "${GREEN}Deploying to Arc Testnet...${NC}"
 
-    local cmd="forge script script/01_DeployDistributor.s.sol --rpc-url arc --broadcast"
-
-    if [ "$verify" = "--verify" ]; then
-        cmd="$cmd --verify"
-    fi
+    local cmd="forge script script/01_DeployDistributor.s.sol --rpc-url arc --broadcast $verify"
 
     eval $cmd
 
@@ -72,16 +89,24 @@ merge_deployments() {
 # Main
 main() {
     local chain=${1:-"baseSepolia"}
-    local verify=${2:-""}
+    local no_verify=${2:-""}
+    local verify="--verify"
 
+    # Disable verification if --no-verify is passed
+    if [ "$no_verify" = "--no-verify" ]; then
+        verify=""
+    fi
+
+    load_env
     check_env
 
     echo -e "${YELLOW}=== ArcFlow Multi-Chain Deployment ===${NC}"
     echo "Chain: $chain"
+    echo "Verify: $([ -n "$verify" ] && echo 'enabled' || echo 'disabled')"
     echo ""
 
     case $chain in
-        "baseSepolia"|"sepolia"|"arbitrumSepolia")
+        "baseSepolia"|"sepolia")
             deploy_source $chain $verify
             ;;
         "arc")
@@ -91,7 +116,6 @@ main() {
             echo -e "${YELLOW}Deploying to all chains...${NC}"
             deploy_source "baseSepolia" $verify
             deploy_source "sepolia" $verify
-            deploy_source "arbitrumSepolia" $verify
             deploy_arc $verify
             merge_deployments
             ;;
@@ -100,7 +124,7 @@ main() {
             ;;
         *)
             echo -e "${RED}Unknown chain: $chain${NC}"
-            echo "Usage: ./deploy.sh [baseSepolia|sepolia|arbitrumSepolia|arc|all|merge] [--verify]"
+            echo "Usage: ./deploy.sh [baseSepolia|sepolia|arc|all|merge] [--no-verify]"
             exit 1
             ;;
     esac

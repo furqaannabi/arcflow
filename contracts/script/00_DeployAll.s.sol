@@ -4,16 +4,22 @@ pragma solidity ^0.8.26;
 import {Script, console} from "forge-std/Script.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 
 import {ArcFlowRouter} from "../src/ArcFlowRouter.sol";
 import {ArcFlowStateManager} from "../src/ArcFlowStateManager.sol";
+import {ArcFlowMigration} from "../src/ArcFlowMigration.sol";
 import {ChainConfig} from "./ChainConfig.sol";
 
 /// @notice Deploys ArcFlowRouter and ArcFlowStateManager on any supported source chain
 /// @dev Automatically detects chain and uses appropriate configuration
 contract DeployAllScript is Script {
+    using PoolIdLibrary for PoolKey;
+    using StateLibrary for IPoolManager;
+
     // 1:1 price for stablecoin pair
     uint160 constant SQRT_PRICE_1_1 = 79228162514264337593543950336;
 
@@ -52,13 +58,18 @@ contract DeployAllScript is Script {
         console.log("Pool Manager:", config.poolManager);
         console.log("Gateway Wallet:", config.gatewayWallet);
 
+        IPoolManager poolManager = IPoolManager(config.poolManager);
+
+        // 1. Check if pool exists, initialize if needed
+        PoolId poolId = poolKey.toId();
+        (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(poolId);
+
         vm.startBroadcast(deployerPrivateKey);
 
-        // 1. Initialize the pool if it doesn't exist
-        IPoolManager poolManager = IPoolManager(config.poolManager);
-        try poolManager.initialize(poolKey, SQRT_PRICE_1_1) returns (int24 tick) {
+        if (sqrtPriceX96 == 0) {
+            int24 tick = poolManager.initialize(poolKey, SQRT_PRICE_1_1);
             console.log("Pool initialized at tick:", tick);
-        } catch {
+        } else {
             console.log("Pool already initialized - continuing");
         }
 
@@ -89,9 +100,23 @@ contract DeployAllScript is Script {
         );
         console.log("Chain configured in StateManager");
 
-        // 5. Set agent in router
+        // 5. Deploy migration contract
+        ArcFlowMigration migration = new ArcFlowMigration(
+            address(router),
+            address(stateManager),
+            config.gatewayWallet,
+            config.usdc
+        );
+        console.log("ArcFlowMigration deployed at:", address(migration));
+
+        // 6. Configure router and migration
         router.setAgent(agentAddress);
-        console.log("Agent set in Router");
+        router.setMigrationContract(address(migration));
+        migration.setAgent(agentAddress);
+        if (config.gatewayMinter != address(0)) {
+            migration.setGatewayMinter(config.gatewayMinter);
+        }
+        console.log("Agent and migration configured");
 
         vm.stopBroadcast();
 
@@ -100,15 +125,17 @@ contract DeployAllScript is Script {
         console.log("Chain:", config.name);
         console.log("StateManager:", address(stateManager));
         console.log("Router:", address(router));
+        console.log("Migration:", address(migration));
 
         // Write addresses to file
-        _writeAddresses(config, address(router), address(stateManager));
+        _writeAddresses(config, address(router), address(stateManager), address(migration));
     }
 
     function _writeAddresses(
         ChainConfig.Config memory config,
         address router,
-        address stateManager
+        address stateManager,
+        address migration
     ) internal {
         string memory chainKey = _getChainKey(config.chainId);
 
@@ -117,11 +144,9 @@ contract DeployAllScript is Script {
             '  "', chainKey, '": {\n',
             '    "router": "', vm.toString(router), '",\n',
             '    "stateManager": "', vm.toString(stateManager), '",\n',
+            '    "migration": "', vm.toString(migration), '",\n',
             '    "usdc": "', vm.toString(config.usdc), '",\n',
-            '    "usdt": "', vm.toString(config.usdt), '",\n',
-            '    "poolManager": "', vm.toString(config.poolManager), '",\n',
-            '    "gatewayWallet": "', vm.toString(config.gatewayWallet), '",\n',
-            '    "circleDomain": ', vm.toString(uint256(config.circleDomain)), '\n',
+            '    "usdt": "', vm.toString(config.usdt), '"\n',
             '  }\n',
             '}'
         );
@@ -134,7 +159,6 @@ contract DeployAllScript is Script {
     function _getChainKey(uint256 chainId) internal pure returns (string memory) {
         if (chainId == ChainConfig.SEPOLIA) return "sepolia";
         if (chainId == ChainConfig.BASE_SEPOLIA) return "baseSepolia";
-        if (chainId == ChainConfig.ARBITRUM_SEPOLIA) return "arbitrumSepolia";
         return "unknown";
     }
 }
