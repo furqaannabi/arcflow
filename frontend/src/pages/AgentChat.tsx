@@ -3,6 +3,7 @@ import { Send, Bot, FileText, X, Sparkles, TrendingUp, Users } from "lucide-reac
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import ChatMessage from "@/components/chat/ChatMessage";
+import CSVUpload from "@/components/chat/CSVUpload";
 import Sidebar from "@/components/Sidebar";
 import ConnectButton from "@/components/ConnectButton";
 
@@ -69,10 +70,49 @@ export default function AgentChat() {
   const [input, setInput] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  // Session ID will be returned by the backend on first message
+  // Backend session ID for API calls
   const [sessionId, setSessionId] = useState<string | null>(null);
+  // Frontend session ID for localStorage persistence
+  const [frontendSessionId, setFrontendSessionId] = useState<string>(() => {
+    // Try to load last active session from localStorage
+    const storedActiveSession = localStorage.getItem('arcflow_active_session');
+    return storedActiveSession || Date.now().toString();
+  });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load messages from localStorage when frontendSessionId changes
+  useEffect(() => {
+    const stored = localStorage.getItem(`arcflow_messages_${frontendSessionId}`);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        const restored = parsed.map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) }));
+        setMessages(restored);
+      } catch (e) {
+        console.error('Failed to parse messages from localStorage', e);
+        setMessages([]);
+      }
+    } else {
+      setMessages([]);
+    }
+    // Reset backend session when switching frontend sessions
+    setSessionId(null);
+  }, [frontendSessionId]);
+
+  // Save messages to localStorage whenever they change
+  const [messagesVersion, setMessagesVersion] = useState(0);
+  useEffect(() => {
+    if (messages.length > 0) {
+      localStorage.setItem(`arcflow_messages_${frontendSessionId}`, JSON.stringify(messages));
+      setMessagesVersion(v => v + 1); // Trigger Sidebar to check for new session
+    }
+  }, [messages, frontendSessionId]);
+
+  // Save active session to localStorage
+  useEffect(() => {
+    localStorage.setItem('arcflow_active_session', frontendSessionId);
+  }, [frontendSessionId]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -222,6 +262,8 @@ export default function AgentChat() {
   };
 
   const handleNewChat = () => {
+    const newId = Date.now().toString();
+    setFrontendSessionId(newId);
     setMessages([]);
     setSessionId(null);
     setInput("");
@@ -229,9 +271,17 @@ export default function AgentChat() {
     inputRef.current?.focus();
   };
 
+  const handleSessionChange = (newSessionId: string) => {
+    if (newSessionId !== frontendSessionId) {
+      setFrontendSessionId(newSessionId);
+      setInput("");
+      setSelectedFiles([]);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-background flex transition-colors duration-300">
-      <Sidebar onNewChat={handleNewChat} />
+      <Sidebar onNewChat={handleNewChat} onSessionChange={handleSessionChange} activeSessionId={frontendSessionId} messagesVersion={messagesVersion} />
 
       <div className="flex-1 flex flex-col h-screen">
         {/* Header */}
@@ -301,6 +351,11 @@ export default function AgentChat() {
             )}
             
             <div className="flex items-center gap-3">
+              <CSVUpload 
+                onFilesSelect={(files) => setSelectedFiles(prev => [...prev, ...files])} 
+                disabled={isLoading} 
+              />
+              
               <div className="flex-1 relative">
                 <textarea
                   ref={inputRef}

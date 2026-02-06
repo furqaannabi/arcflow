@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { MessageSquare, Plus, Sun, Moon, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -13,25 +13,68 @@ interface ChatSession {
 
 interface SidebarProps {
   onNewChat?: () => void;
+  onSessionChange?: (sessionId: string) => void;
+  activeSessionId?: string;
+  messagesVersion?: number; // Triggers session check when messages change
 }
 
-export default function Sidebar({ onNewChat }: SidebarProps) {
+export default function Sidebar({ onNewChat, onSessionChange, activeSessionId: externalActiveSessionId, messagesVersion }: SidebarProps) {
   const { theme, setTheme } = useTheme();
-  const [sessions, setSessions] = useState<ChatSession[]>([
-    {
-      id: "1",
-      title: "Payroll Setup",
-      lastMessage: "Set payroll date to March 1st",
-      timestamp: new Date(Date.now() - 3600000),
-    },
-    {
-      id: "2",
-      title: "USDC Approval",
-      lastMessage: "Approve 1000 USDC for router",
-      timestamp: new Date(Date.now() - 7200000),
-    },
-  ]);
-  const [activeSessionId, setActiveSessionId] = useState<string>("1");
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string>(sessions[0]?.id || "1");
+  // Use external active session if provided, otherwise manage locally
+  const effectiveActiveSessionId = externalActiveSessionId || activeSessionId;
+
+  // Load sessions from localStorage on mount
+  useEffect(() => {
+    const stored = localStorage.getItem('arcflow_sessions');
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        // Restore Date objects
+        const restored = parsed.map((s: any) => ({ ...s, timestamp: new Date(s.timestamp) }));
+        setSessions(restored);
+        if (restored.length > 0 && !externalActiveSessionId) {
+          setActiveSessionId(restored[0].id);
+        }
+      } catch (e) {
+        console.error('Failed to parse sessions from localStorage', e);
+      }
+    }
+  }, []);
+
+  // Save sessions to localStorage when they change
+  useEffect(() => {
+    if (sessions.length > 0) {
+      localStorage.setItem('arcflow_sessions', JSON.stringify(sessions));
+    }
+  }, [sessions]);
+
+  // Ensure externalActiveSessionId has a session entry (only if messages exist)
+  useEffect(() => {
+    if (externalActiveSessionId && !sessions.find(s => s.id === externalActiveSessionId)) {
+      // Only auto-create if there are messages stored for this session
+      const messagesJson = localStorage.getItem(`arcflow_messages_${externalActiveSessionId}`);
+      if (messagesJson) {
+        try {
+          const messages = JSON.parse(messagesJson);
+          // Get first user message for title
+          const firstUserMsg = messages.find((m: any) => m.role === 'user');
+          const title = firstUserMsg?.content?.slice(0, 30) || "Chat";
+          
+          const newSession: ChatSession = {
+            id: externalActiveSessionId,
+            title: title + (title.length >= 30 ? "..." : ""),
+            lastMessage: messages[messages.length - 1]?.content?.slice(0, 50) || "",
+            timestamp: new Date(),
+          };
+          setSessions(prev => [newSession, ...prev]);
+        } catch (e) {
+          console.error('Failed to parse messages for session creation', e);
+        }
+      }
+    }
+  }, [externalActiveSessionId, sessions, messagesVersion]);
 
   const handleNewChat = () => {
     const newSession: ChatSession = {
@@ -42,14 +85,29 @@ export default function Sidebar({ onNewChat }: SidebarProps) {
     };
     setSessions([newSession, ...sessions]);
     setActiveSessionId(newSession.id);
+    if (onSessionChange) onSessionChange(newSession.id);
     if (onNewChat) onNewChat();
   };
 
   const handleDeleteSession = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setSessions(sessions.filter((s) => s.id !== id));
-    if (activeSessionId === id && sessions.length > 1) {
-      setActiveSessionId(sessions[0].id === id ? sessions[1].id : sessions[0].id);
+    // Delete messages for this session
+    localStorage.removeItem(`arcflow_messages_${id}`);
+    
+    const remainingSessions = sessions.filter((s) => s.id !== id);
+    setSessions(remainingSessions);
+    
+    // If we're deleting the active session, switch to another one
+    const isActiveSession = effectiveActiveSessionId === id;
+    if (isActiveSession && remainingSessions.length > 0) {
+      const nextSession = remainingSessions[0];
+      setActiveSessionId(nextSession.id);
+      if (onSessionChange) onSessionChange(nextSession.id);
+    } else if (isActiveSession && remainingSessions.length === 0) {
+      // No sessions left, create a new one
+      const newId = Date.now().toString();
+      setActiveSessionId(newId);
+      if (onSessionChange) onSessionChange(newId);
     }
   };
 
@@ -92,10 +150,13 @@ export default function Sidebar({ onNewChat }: SidebarProps) {
         {sessions.map((session) => (
           <div
             key={session.id}
-            onClick={() => setActiveSessionId(session.id)}
+            onClick={() => {
+              setActiveSessionId(session.id);
+              if (onSessionChange) onSessionChange(session.id);
+            }}
             className={cn(
               "group relative px-3 py-2.5 rounded-lg cursor-pointer transition-colors",
-              activeSessionId === session.id
+              effectiveActiveSessionId === session.id
                 ? "bg-blue-50 dark:bg-blue-900/20"
                 : "hover:bg-gray-50 dark:hover:bg-accent"
             )}
@@ -104,7 +165,7 @@ export default function Sidebar({ onNewChat }: SidebarProps) {
               <MessageSquare
                 className={cn(
                   "w-4 h-4 mt-0.5 shrink-0",
-                  activeSessionId === session.id
+                  effectiveActiveSessionId === session.id
                     ? "text-blue-600 dark:text-blue-400"
                     : "text-gray-400 dark:text-gray-500"
                 )}
@@ -128,11 +189,6 @@ export default function Sidebar({ onNewChat }: SidebarProps) {
                     <Trash2 className="w-3 h-3 text-red-500" />
                   </button>
                 </div>
-                {session.lastMessage && (
-                  <p className="text-xs text-gray-500 dark:text-muted-foreground truncate mt-0.5">
-                    {session.lastMessage}
-                  </p>
-                )}
                 <p className="text-xs text-gray-400 dark:text-gray-600 mt-1">
                   {formatTimestamp(session.timestamp)}
                 </p>
