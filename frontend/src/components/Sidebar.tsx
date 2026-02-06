@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { MessageSquare, Plus, Sun, Moon, Trash2 } from "lucide-react";
+import { MessageSquare, Plus, Sun, Moon, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/contexts/ThemeContext";
 
@@ -15,10 +15,12 @@ interface SidebarProps {
   onNewChat?: () => void;
   onSessionChange?: (sessionId: string) => void;
   activeSessionId?: string;
-  messagesVersion?: number; // Triggers session check when messages change
+  messagesVersion?: number;
+  isOpen?: boolean;
+  onClose?: () => void;
 }
 
-export default function Sidebar({ onNewChat, onSessionChange, activeSessionId: externalActiveSessionId, messagesVersion }: SidebarProps) {
+export default function Sidebar({ onNewChat, onSessionChange, activeSessionId: externalActiveSessionId, messagesVersion, isOpen = true, onClose }: SidebarProps) {
   const { theme, setTheme } = useTheme();
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string>(sessions[0]?.id || "1");
@@ -122,7 +124,27 @@ export default function Sidebar({ onNewChat, onSessionChange, activeSessionId: e
   };
 
   return (
-    <div className="w-64 min-h-screen bg-white dark:bg-card border-r border-gray-100 dark:border-border p-4 flex flex-col transition-colors duration-300">
+    <>
+      {/* Mobile overlay */}
+      {isOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40 md:hidden" 
+          onClick={onClose}
+        />
+      )}
+      
+      {/* Sidebar */}
+      <div className={cn(
+        "fixed md:relative z-50 w-64 h-screen bg-white dark:bg-card border-r border-gray-100 dark:border-border p-4 flex flex-col transition-all duration-300",
+        isOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+      )}>
+        {/* Mobile close button */}
+        <button 
+          onClick={onClose}
+          className="absolute top-4 right-4 p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-accent md:hidden"
+        >
+          <X className="w-5 h-5 text-gray-500" />
+        </button>
       {/* Header */}
       <div className="flex items-center justify-between mb-6 px-2">
         <Link to="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
@@ -213,5 +235,6 @@ export default function Sidebar({ onNewChat, onSessionChange, activeSessionId: e
         </button>
       </div>
     </div>
+    </>
   );
 }

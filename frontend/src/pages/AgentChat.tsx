@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Bot, FileText, X, Sparkles, TrendingUp, Users } from "lucide-react";
+import { Send, Bot, FileText, X, Sparkles, TrendingUp, Users, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import ChatMessage from "@/components/chat/ChatMessage";
@@ -70,6 +70,7 @@ export default function AgentChat() {
   const [input, setInput] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   // Backend session ID for API calls
   const [sessionId, setSessionId] = useState<string | null>(null);
   // Frontend session ID for localStorage persistence
@@ -281,16 +282,29 @@ export default function AgentChat() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-background flex transition-colors duration-300">
-      <Sidebar onNewChat={handleNewChat} onSessionChange={handleSessionChange} activeSessionId={frontendSessionId} messagesVersion={messagesVersion} />
+      <Sidebar 
+        onNewChat={handleNewChat} 
+        onSessionChange={handleSessionChange} 
+        activeSessionId={frontendSessionId} 
+        messagesVersion={messagesVersion}
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
 
       <div className="flex-1 flex flex-col h-screen">
         {/* Header */}
-        <header className="bg-white dark:bg-card border-b border-gray-100 dark:border-border h-16 px-8 flex items-center justify-between shrink-0 transition-colors duration-300">
+        <header className="bg-white dark:bg-card border-b border-gray-100 dark:border-border h-16 px-4 md:px-8 flex items-center justify-between shrink-0 transition-colors duration-300">
           <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setSidebarOpen(true)}
+              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-accent md:hidden"
+            >
+              <Menu className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+            </button>
             <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
               <Bot className="w-5 h-5 text-blue-600 dark:text-blue-400" />
             </div>
-            <h1 className="text-xl font-bold text-gray-900 dark:text-foreground">AI Assistant</h1>
+            <h1 className="text-lg md:text-xl font-bold text-gray-900 dark:text-foreground">AI Assistant</h1>
           </div>
           
           <div className="flex items-center gap-4">
