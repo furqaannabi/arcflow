@@ -4,6 +4,7 @@ import {
   http,
   parseUnits,
   formatUnits,
+  encodeFunctionData,
   type Address,
 } from "viem";
 import { baseSepolia } from "viem/chains";
@@ -105,7 +106,6 @@ export class ContractService {
     to: Address;
     data: string;
   } {
-    const { encodeFunctionData } = require("viem");
     return {
       to: ADDRESSES.usdc,
       data: encodeFunctionData({
@@ -125,7 +125,6 @@ export class ContractService {
     to: Address;
     data: string;
   } {
-    const { encodeFunctionData } = require("viem");
     return {
       to: ADDRESSES.router,
       data: encodeFunctionData({
@@ -178,7 +177,6 @@ export class ContractService {
     to: Address;
     data: string;
   } {
-    const { encodeFunctionData } = require("viem");
     return {
       to: ADDRESSES.router,
       data: encodeFunctionData({
@@ -212,7 +210,7 @@ export class ContractService {
     to: Address;
     data: string;
   } {
-    const { encodeFunctionData } = require("viem");
+
     return {
       to: ADDRESSES.migration,
       data: encodeFunctionData({
@@ -234,7 +232,7 @@ export class ContractService {
     to: Address;
     data: string;
   } {
-    const { encodeFunctionData } = require("viem");
+
     return {
       to: ADDRESSES.migration,
       data: encodeFunctionData({
