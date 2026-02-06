@@ -3,6 +3,8 @@ pragma solidity ^0.8.24;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {ArcFlowStateManager} from "./ArcFlowStateManager.sol";
 import {IGatewayWallet, IGatewayMinter} from "./interfaces/ICircleGateway.sol";
 import {MigrationStatus} from "./structs/CrossChainStructs.sol";
@@ -16,8 +18,11 @@ interface IArcFlowRouter {
 
 /// @title ArcFlow Migration Extension
 /// @notice Handles cross-chain migration for yield optimization
+/// @dev ALL migrations MUST go through Yellow Network state channels
 contract ArcFlowMigration {
     using SafeERC20 for IERC20;
+    using ECDSA for bytes32;
+    using MessageHashUtils for bytes32;
 
     error Unauthorized();
     error NoPosition();
@@ -25,9 +30,11 @@ contract ArcFlowMigration {
     error SameChain();
     error TooCloseToPayroll();
     error HasLiquidity();
+    error YellowChannelRequired();
+    error InvalidChannelSignature();
 
-    event MigrationOut(uint256 indexed payrollId, uint256 toChainId, uint256 amount);
-    event MigrationIn(uint256 indexed payrollId, uint256 fromChainId, uint256 amount);
+    event MigrationOut(uint256 indexed payrollId, uint256 toChainId, uint256 amount, bytes32 channelId);
+    event MigrationIn(uint256 indexed payrollId, uint256 fromChainId, uint256 amount, bytes32 channelId);
 
     IArcFlowRouter public immutable router;
     ArcFlowStateManager public immutable stateManager;
@@ -62,7 +69,23 @@ contract ArcFlowMigration {
         gatewayMinter = IGatewayMinter(_minter);
     }
 
-    function migrateOut(uint256 payrollId, uint256 targetChainId) external onlyAgent returns (uint256 amount) {
+    /// @notice Migrate out via Yellow Network channel (REQUIRED)
+    /// @param payrollId The payroll to migrate
+    /// @param targetChainId Target chain for migration
+    /// @param channelId Yellow Network channel ID
+    /// @param channelSignature Signature from authorized agent verifying channel
+    function migrateOutViaChannel(
+        uint256 payrollId,
+        uint256 targetChainId,
+        bytes32 channelId,
+        bytes calldata channelSignature
+    ) external onlyAgent returns (uint256 amount) {
+        // Verify Yellow Network channel signature
+        bytes32 stateHash = keccak256(abi.encodePacked(channelId, payrollId, targetChainId));
+        bytes32 ethSignedHash = stateHash.toEthSignedMessageHash();
+        address signer = ethSignedHash.recover(channelSignature);
+        if (signer != agent && signer != owner) revert InvalidChannelSignature();
+
         (uint128 liquidity, uint256 currentChain, uint256 payrollDate) = router.getPositionData(payrollId);
         if (liquidity == 0) revert NoPosition();
         if (currentChain != chainId) revert WrongChain();
@@ -72,26 +95,53 @@ contract ArcFlowMigration {
         amount = router.removeLiquidityFor(payrollId);
         router.updatePositionChain(payrollId, targetChainId);
 
+        // Record channel settlement
+        stateManager.recordChannelSettlement(channelId, payrollId, amount);
         stateManager.updateMigrationState(payrollId, amount, chainId, targetChainId, MigrationStatus.PENDING);
 
         usdc.approve(address(gatewayWallet), amount);
         gatewayWallet.deposit(address(usdc), amount);
 
-        emit MigrationOut(payrollId, targetChainId, amount);
+        emit MigrationOut(payrollId, targetChainId, amount, channelId);
     }
 
-    function migrateIn(uint256 payrollId, uint256 fromChainId, uint256 amount, bytes calldata attestation, bytes calldata signature) external onlyAgent returns (uint128 newLiquidity) {
+    /// @notice Migrate in via Yellow Network channel (REQUIRED)
+    /// @param payrollId The payroll to migrate
+    /// @param fromChainId Source chain of migration
+    /// @param amount Amount being migrated
+    /// @param channelId Yellow Network channel ID
+    /// @param channelSignature Signature from authorized agent
+    /// @param attestation Circle Gateway attestation
+    /// @param gatewaySignature Circle Gateway signature
+    function migrateInViaChannel(
+        uint256 payrollId,
+        uint256 fromChainId,
+        uint256 amount,
+        bytes32 channelId,
+        bytes calldata channelSignature,
+        bytes calldata attestation,
+        bytes calldata gatewaySignature
+    ) external onlyAgent returns (uint128 newLiquidity) {
+        // Verify Yellow Network channel signature
+        bytes32 stateHash = keccak256(abi.encodePacked(channelId, payrollId, amount));
+        bytes32 ethSignedHash = stateHash.toEthSignedMessageHash();
+        address signer = ethSignedHash.recover(channelSignature);
+        if (signer != agent && signer != owner) revert InvalidChannelSignature();
+
         (uint128 liquidity, uint256 currentChain, ) = router.getPositionData(payrollId);
         if (currentChain != chainId) revert WrongChain();
         if (liquidity != 0) revert HasLiquidity();
 
-        gatewayMinter.gatewayMint(attestation, signature);
+        gatewayMinter.gatewayMint(attestation, gatewaySignature);
         usdc.safeTransfer(address(router), amount);
 
         newLiquidity = router.addLiquidityFor(payrollId, amount);
+
+        // Record channel settlement
+        stateManager.recordChannelSettlement(channelId, payrollId, amount);
         stateManager.updateMigrationState(payrollId, amount, fromChainId, chainId, MigrationStatus.COMPLETED);
 
-        emit MigrationIn(payrollId, fromChainId, amount);
+        emit MigrationIn(payrollId, fromChainId, amount, channelId);
     }
 
     function shouldMigrate(uint256 payrollId) external view returns (bool migrate, uint256 targetChain, uint256 apyDiff) {

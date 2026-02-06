@@ -103,6 +103,27 @@
           ]
         }
       ]
+    },
+    {
+      "name": "settleFromChannel",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "payrollId", "type": "uint256" },
+        { "name": "channelId", "type": "bytes32" },
+        { "name": "stateSignature", "type": "bytes" }
+      ],
+      "outputs": [{ "name": "usdcAmount", "type": "uint256" }]
+    },
+    {
+      "name": "getChannelInfo",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [{ "name": "payrollId", "type": "uint256" }],
+      "outputs": [
+        { "name": "channelId", "type": "bytes32" },
+        { "name": "isChannelSettled", "type": "bool" }
+      ]
     }
   ],
   "stateManager": [
@@ -156,6 +177,71 @@
       "stateMutability": "view",
       "inputs": [{ "name": "payrollDate", "type": "uint256" }],
       "outputs": [{ "name": "", "type": "bool" }]
+    },
+    {
+      "name": "recordChannelSettlement",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "channelId", "type": "bytes32" },
+        { "name": "payrollId", "type": "uint256" },
+        { "name": "totalAmount", "type": "uint256" }
+      ],
+      "outputs": []
+    },
+    {
+      "name": "markChannelDistributed",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [{ "name": "channelId", "type": "bytes32" }],
+      "outputs": []
+    },
+    {
+      "name": "verifyChannelState",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [
+        { "name": "channelId", "type": "bytes32" },
+        { "name": "stateHash", "type": "bytes32" },
+        { "name": "signature", "type": "bytes" }
+      ],
+      "outputs": [{ "name": "valid", "type": "bool" }]
+    },
+    {
+      "name": "getChannelSettlement",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [{ "name": "channelId", "type": "bytes32" }],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "components": [
+            { "name": "channelId", "type": "bytes32" },
+            { "name": "payrollId", "type": "uint256" },
+            { "name": "totalAmount", "type": "uint256" },
+            { "name": "settledAt", "type": "uint256" },
+            { "name": "distributed", "type": "bool" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "getPayrollChannel",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [{ "name": "payrollId", "type": "uint256" }],
+      "outputs": [{ "name": "", "type": "bytes32" }]
+    },
+    {
+      "name": "setNitroliteContracts",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "_deposit", "type": "address" },
+        { "name": "_adjudicator", "type": "address" }
+      ],
+      "outputs": []
     }
   ],
   "migration": [
@@ -217,6 +303,64 @@
         }
       ],
       "outputs": [{ "name": "batchId", "type": "uint256" }]
+    },
+    {
+      "name": "distributeFromChannel",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "channelId", "type": "bytes32" },
+        { "name": "payrollId", "type": "uint256" },
+        { "name": "totalAmount", "type": "uint256" },
+        { "name": "channelSignature", "type": "bytes" },
+        {
+          "name": "recipients",
+          "type": "tuple[]",
+          "components": [
+            { "name": "wallet", "type": "address" },
+            { "name": "amount", "type": "uint256" }
+          ]
+        }
+      ],
+      "outputs": [{ "name": "batchId", "type": "uint256" }]
+    },
+    {
+      "name": "verifyChannelState",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [
+        { "name": "channelId", "type": "bytes32" },
+        { "name": "payrollId", "type": "uint256" },
+        { "name": "totalAmount", "type": "uint256" },
+        { "name": "channelSignature", "type": "bytes" }
+      ],
+      "outputs": [{ "name": "channelStateHash", "type": "bytes32" }]
+    },
+    {
+      "name": "isChannelProcessed",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [{ "name": "channelId", "type": "bytes32" }],
+      "outputs": [{ "name": "", "type": "bool" }]
+    },
+    {
+      "name": "getChannelPayroll",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [{ "name": "channelId", "type": "bytes32" }],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "components": [
+            { "name": "channelId", "type": "bytes32" },
+            { "name": "payrollId", "type": "uint256" },
+            { "name": "totalAmount", "type": "uint256" },
+            { "name": "settledAt", "type": "uint256" },
+            { "name": "distributed", "type": "bool" }
+          ]
+        }
+      ]
     }
   ],
   "erc20": [

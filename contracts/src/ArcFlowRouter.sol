@@ -14,8 +14,15 @@ import {PayrollRecipient} from "./structs/ArcPayrollDistributorStructs.sol";
 
 /// @title ArcFlow Router
 /// @notice Single-sided USDC deposit into existing USDC-USDT pool
+/// @dev Supports both direct execution and Yellow Network state channel execution
 contract ArcFlowRouter is ArcFlowBase {
     using SafeERC20 for IERC20;
+
+    /// @notice Execution mode for payroll distribution
+    enum ExecutionMode {
+        Direct,      // Direct on-chain execution via Circle Gateway
+        StateChannel // Yellow Network state channel execution
+    }
 
     error ZeroAmount();
     error InvalidDate();
@@ -23,10 +30,13 @@ contract ArcFlowRouter is ArcFlowBase {
     error NoPosition();
     error NotReady();
     error WrongChain();
+    error InvalidChannelState();
+    error ChannelNotSettled();
 
     event Deposited(uint256 indexed payrollId, address indexed provider, uint256 usdcAmount, uint128 liquidity);
     event Withdrawn(uint256 indexed payrollId, address indexed provider, uint256 usdcBridged, uint256 yield);
     event AgentUpdated(address oldAgent, address newAgent);
+    event ChannelSettled(uint256 indexed payrollId, bytes32 indexed channelId, uint256 amount);
 
     mapping(address => uint256) public providerAccumulatedYield;
     address public migrationContract;
@@ -96,11 +106,8 @@ contract ArcFlowRouter is ArcFlowBase {
         emit Deposited(payrollId, msg.sender, usdcAmount, liquidity);
     }
 
-    function withdraw(uint256 payrollId) external onlyAgent returns (uint256) {
-        return _executeWithdraw(payrollId);
-    }
-
-    function _executeWithdraw(uint256 payrollId) internal returns (uint256 usdcBridged) {
+    /// @notice Internal withdraw logic - only callable via settleFromChannel
+    function _executeWithdrawInternal(uint256 payrollId) internal returns (uint256 usdcAmount) {
         LPPosition memory pos = positions[payrollId];
         if (pos.liquidity == 0) revert NoPosition();
         if (block.timestamp < pos.payrollDate) revert NotReady();
@@ -112,11 +119,11 @@ contract ArcFlowRouter is ArcFlowBase {
         uint256 yieldAmt = 0;
         if (usdc0 > pos.usdcDeposited) {
             yieldAmt = usdc0 - pos.usdcDeposited;
-            usdcBridged = pos.usdcDeposited;
+            usdcAmount = pos.usdcDeposited;
             providerAccumulatedYield[pos.provider] += yieldAmt;
             usdc.safeTransfer(pos.provider, yieldAmt);
         } else {
-            usdcBridged = usdc0;
+            usdcAmount = usdc0;
         }
 
         totalLiquidity -= pos.liquidity;
@@ -124,18 +131,7 @@ contract ArcFlowRouter is ArcFlowBase {
         _removePayroll(payrollId);
         _removeFromProviderPayrolls(pos.provider, payrollId);
 
-        usdc.approve(address(gatewayWallet), usdcBridged);
-        gatewayWallet.deposit(address(usdc), usdcBridged);
-
-        emit Withdrawn(payrollId, pos.provider, usdcBridged, yieldAmt);
-    }
-
-    function executeReadyPayrolls() external onlyAgent returns (uint256 executed, uint256 totalBridged) {
-        uint256[] memory ready = this.getReadyPayrolls();
-        for (uint256 i = 0; i < ready.length; i++) {
-            totalBridged += _executeWithdraw(ready[i]);
-            executed++;
-        }
+        emit Withdrawn(payrollId, pos.provider, usdcAmount, yieldAmt);
     }
 
     // Migration helpers - called by migration contract
@@ -186,5 +182,52 @@ contract ArcFlowRouter is ArcFlowBase {
 
     function emergencyWithdraw(address token, uint256 amount) external onlyOwner {
         IERC20(token).safeTransfer(owner, amount);
+    }
+
+    // ============ Yellow Network State Channel Functions ============
+
+    /// @notice Settle a payroll from Yellow Network state channel (REQUIRED)
+    /// @dev This is the ONLY way to execute payrolls. Direct execution is disabled.
+    /// @param payrollId The payroll to settle
+    /// @param channelId The Yellow Network channel ID
+    /// @param stateSignature Signature from authorized agent verifying the channel state
+    function settleFromChannel(
+        uint256 payrollId,
+        bytes32 channelId,
+        bytes calldata stateSignature
+    ) external onlyAgent returns (uint256 usdcAmount) {
+        LPPosition memory pos = positions[payrollId];
+        if (pos.liquidity == 0) revert NoPosition();
+        if (block.timestamp < pos.payrollDate) revert NotReady();
+        if (pos.currentChainId != chainId) revert WrongChain();
+
+        // Verify the Yellow Network channel state signature (REQUIRED)
+        bytes32 stateHash = keccak256(abi.encodePacked(channelId, payrollId, pos.usdcDeposited));
+        bool valid = stateManager.verifyChannelState(channelId, stateHash, stateSignature);
+        if (!valid) revert InvalidChannelState();
+
+        // Execute withdrawal via internal method
+        usdcAmount = _executeWithdrawInternal(payrollId);
+
+        // Record settlement in state manager
+        stateManager.recordChannelSettlement(channelId, payrollId, usdcAmount);
+
+        // Bridge via Circle Gateway
+        usdc.approve(address(gatewayWallet), usdcAmount);
+        gatewayWallet.deposit(address(usdc), usdcAmount);
+
+        emit ChannelSettled(payrollId, channelId, usdcAmount);
+    }
+
+    /// @notice Get execution mode info for a payroll
+    /// @param payrollId Payroll to query
+    /// @return channelId Associated channel (0x0 if none)
+    /// @return isChannelSettled Whether channel is settled
+    function getChannelInfo(uint256 payrollId) external view returns (bytes32 channelId, bool isChannelSettled) {
+        channelId = stateManager.getPayrollChannel(payrollId);
+        if (channelId != bytes32(0)) {
+            ArcFlowStateManager.ChannelSettlement memory settlement = stateManager.getChannelSettlement(channelId);
+            isChannelSettled = settlement.settledAt > 0;
+        }
     }
 }

@@ -1,5 +1,6 @@
 import {
   createPublicClient,
+  createWalletClient,
   http,
   type Address,
   type PublicClient,
@@ -12,11 +13,15 @@ import {
   toBytes,
 } from "viem";
 import { sepolia, baseSepolia } from "viem/chains";
-import { signMessage } from "viem/accounts";
+import { signMessage, privateKeyToAccount } from "viem/accounts";
 import { getRpcUrl, CHAIN_IDS } from "./config";
 import addressesJson from "./addresses.json" with { type: "json" };
 import abis from "./abis.json" with { type: "json" };
 import { YellowSDKClient, getYellowSDKClient } from "./yellowClient";
+
+// Contract ABIs
+const ROUTER_ABI = abis.router;
+const STATE_MANAGER_ABI = abis.stateManager;
 
 // Arc Testnet chain definition
 const arcTestnet: Chain = {
@@ -416,7 +421,7 @@ export class YellowChunkingService {
 
   /**
    * Execute payroll via Yellow Network state channel
-   * Creates channel → Funds → Settles
+   * Creates channel → Funds → Settles → Records on-chain
    */
   async executePayrollViaChannel(payrollId: bigint): Promise<{
     channelId: string;
@@ -454,8 +459,6 @@ export class YellowChunkingService {
     console.log("[YELLOW] Channel funded");
 
     // Step 3: Off-chain state represents the payroll distribution
-    // In Yellow Network, the channel balance represents the funds
-    // Distribution to recipients happens via state updates
     console.log("[YELLOW] Step 3: Payroll distribution recorded in channel state");
 
     // Step 4: Close channel and settle on-chain
@@ -463,14 +466,102 @@ export class YellowChunkingService {
     await this.sdkClient.closeChannel();
     console.log("[YELLOW] Channel closed and settled");
 
-    // Step 5: Optionally withdraw from custody to recipients
-    // This depends on the specific flow - funds can stay in custody
-    // or be withdrawn to the wallet for further distribution
+    // Step 5: Sign channel state for contract verification
+    console.log("[YELLOW] Step 5: Signing channel state for contracts...");
+    const channelStateSignature = await this.signChannelState(
+      channelId as `0x${string}`,
+      payrollId,
+      totalAmount
+    );
+
+    // Step 6: Record settlement on StateManager contract
+    let txHash: string | undefined;
+    if (channelStateSignature) {
+      console.log("[YELLOW] Step 6: Recording settlement on-chain...");
+      txHash = await this.recordChannelSettlementOnChain(
+        channelId as `0x${string}`,
+        payrollId,
+        totalAmount
+      );
+      console.log(`[YELLOW] Settlement recorded. TX: ${txHash}`);
+    }
 
     return {
       channelId,
       settled: true,
+      txHash,
     };
+  }
+
+  /**
+   * Sign channel state hash for contract verification
+   */
+  async signChannelState(
+    channelId: `0x${string}`,
+    payrollId: bigint,
+    totalAmount: bigint
+  ): Promise<string | null> {
+    if (!this.privateKey) {
+      console.log("[YELLOW] No private key - cannot sign channel state");
+      return null;
+    }
+
+    try {
+      // Compute channel state hash (must match contract computation)
+      const stateHash = keccak256(
+        encodeAbiParameters(
+          parseAbiParameters("bytes32, uint256, uint256"),
+          [channelId, payrollId, totalAmount]
+        )
+      );
+
+      const signature = await signMessage({
+        message: { raw: toBytes(stateHash) },
+        privateKey: this.privateKey as `0x${string}`,
+      });
+
+      console.log(`[YELLOW] Channel state signed: ${stateHash.slice(0, 18)}...`);
+      return signature;
+    } catch (error) {
+      console.error("[YELLOW] Error signing channel state:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Record channel settlement on StateManager contract
+   */
+  async recordChannelSettlementOnChain(
+    channelId: `0x${string}`,
+    payrollId: bigint,
+    totalAmount: bigint
+  ): Promise<string | undefined> {
+    if (!this.privateKey) return undefined;
+
+    try {
+      const rpcUrl = getRpcUrl(CHAIN_IDS.SEPOLIA, this.alchemyApiKey);
+      const account = privateKeyToAccount(this.privateKey as `0x${string}`);
+
+      const walletClient = createWalletClient({
+        account,
+        chain: sepolia,
+        transport: http(rpcUrl),
+      });
+
+      const stateManagerAddress = addressesJson.sepolia.stateManager as Address;
+
+      const hash = await walletClient.writeContract({
+        address: stateManagerAddress,
+        abi: STATE_MANAGER_ABI,
+        functionName: "recordChannelSettlement",
+        args: [channelId, payrollId, totalAmount],
+      });
+
+      return hash;
+    } catch (error) {
+      console.error("[YELLOW] Error recording settlement on-chain:", error);
+      return undefined;
+    }
   }
 
   /**

@@ -12,6 +12,7 @@ import {
     ChainApyData,
     ChainConfig
 } from "./structs/CrossChainStructs.sol";
+import {IDeposit} from "./interfaces/INitrolite.sol";
 
 /// @title ArcFlow State Manager
 /// @notice Manages Yellow Network state verification and cross-chain APY tracking
@@ -42,6 +43,27 @@ contract ArcFlowStateManager is Ownable {
     uint256 public constant MIN_MIGRATION_WINDOW = 24 hours;
     uint256 public constant APY_STALE_THRESHOLD = 1 hours;
 
+    // ============ Nitrolite Integration ============
+
+    // Yellow Network Nitrolite contract addresses
+    address public nitroliteDeposit;
+    address public nitroliteAdjudicator;
+
+    // Channel settlement tracking
+    struct ChannelSettlement {
+        bytes32 channelId;
+        uint256 payrollId;
+        uint256 totalAmount;
+        uint256 settledAt;
+        bool distributed;
+    }
+
+    // Channel settlements by channelId
+    mapping(bytes32 => ChannelSettlement) public channelSettlements;
+
+    // Payroll to channel mapping
+    mapping(uint256 => bytes32) public payrollChannels;
+
     // ============ Events ============
 
     event AgentAuthorized(address indexed agent, bool authorized);
@@ -57,6 +79,13 @@ contract ArcFlowStateManager is Ownable {
         MigrationStatus status,
         bytes32 stateHash
     );
+    event NitroliteContractsUpdated(address deposit, address adjudicator);
+    event ChannelSettlementRecorded(
+        bytes32 indexed channelId,
+        uint256 indexed payrollId,
+        uint256 totalAmount
+    );
+    event ChannelDistributionCompleted(bytes32 indexed channelId, uint256 indexed payrollId);
 
     // ============ Errors ============
 
@@ -66,6 +95,9 @@ contract ArcFlowStateManager is Ownable {
     error MigrationWindowTooSmall();
     error MigrationAlreadyProcessed();
     error InvalidStateSignature();
+    error ChannelAlreadySettled();
+    error ChannelNotSettled();
+    error InvalidChannelState();
 
     // ============ Modifiers ============
 
@@ -289,5 +321,108 @@ contract ArcFlowStateManager is Ownable {
         uint256 payrollId
     ) external view returns (MigrationState memory) {
         return migrations[payrollId];
+    }
+
+    // ============ Nitrolite Functions ============
+
+    /// @notice Set Nitrolite contract addresses
+    /// @param _deposit Yellow Network deposit/custody contract
+    /// @param _adjudicator Yellow Network adjudicator contract
+    function setNitroliteContracts(
+        address _deposit,
+        address _adjudicator
+    ) external onlyOwner {
+        nitroliteDeposit = _deposit;
+        nitroliteAdjudicator = _adjudicator;
+        emit NitroliteContractsUpdated(_deposit, _adjudicator);
+    }
+
+    /// @notice Record a channel settlement from Yellow Network
+    /// @param channelId The settled channel ID
+    /// @param payrollId Associated payroll ID
+    /// @param totalAmount Total amount settled
+    function recordChannelSettlement(
+        bytes32 channelId,
+        uint256 payrollId,
+        uint256 totalAmount
+    ) external onlyAuthorizedAgent {
+        if (channelSettlements[channelId].settledAt != 0)
+            revert ChannelAlreadySettled();
+
+        channelSettlements[channelId] = ChannelSettlement({
+            channelId: channelId,
+            payrollId: payrollId,
+            totalAmount: totalAmount,
+            settledAt: block.timestamp,
+            distributed: false
+        });
+
+        payrollChannels[payrollId] = channelId;
+
+        emit ChannelSettlementRecorded(channelId, payrollId, totalAmount);
+    }
+
+    /// @notice Mark channel distribution as completed
+    /// @param channelId The channel that was distributed
+    function markChannelDistributed(bytes32 channelId) external onlyAuthorizedAgent {
+        ChannelSettlement storage settlement = channelSettlements[channelId];
+        if (settlement.settledAt == 0) revert ChannelNotSettled();
+
+        settlement.distributed = true;
+        emit ChannelDistributionCompleted(channelId, settlement.payrollId);
+    }
+
+    /// @notice Verify a channel state hash with signature
+    /// @param channelId Channel identifier
+    /// @param stateHash Hash of the channel state
+    /// @param signature Signature from authorized agent
+    /// @return valid Whether the signature is valid
+    function verifyChannelState(
+        bytes32 channelId,
+        bytes32 stateHash,
+        bytes calldata signature
+    ) external view returns (bool valid) {
+        bytes32 ethSignedHash = stateHash.toEthSignedMessageHash();
+        address signer = ethSignedHash.recover(signature);
+        return authorizedAgents[signer] || signer == owner();
+    }
+
+    /// @notice Get channel settlement info
+    /// @param channelId Channel to query
+    /// @return settlement The settlement data
+    function getChannelSettlement(
+        bytes32 channelId
+    ) external view returns (ChannelSettlement memory) {
+        return channelSettlements[channelId];
+    }
+
+    /// @notice Get channel ID for a payroll
+    /// @param payrollId Payroll to query
+    /// @return channelId The associated channel
+    function getPayrollChannel(uint256 payrollId) external view returns (bytes32) {
+        return payrollChannels[payrollId];
+    }
+
+    /// @notice Get balance from Nitrolite custody contract
+    /// @param account Account to query
+    /// @param token Token address
+    /// @return balance The custody balance
+    function getNitroliteBalance(
+        address account,
+        address token
+    ) external view returns (uint256) {
+        if (nitroliteDeposit == address(0)) return 0;
+
+        address[] memory accounts = new address[](1);
+        address[] memory tokens = new address[](1);
+        accounts[0] = account;
+        tokens[0] = token;
+
+        uint256[] memory balances = IDeposit(nitroliteDeposit).getAccountsBalances(
+            accounts,
+            tokens
+        );
+
+        return balances.length > 0 ? balances[0] : 0;
     }
 }
