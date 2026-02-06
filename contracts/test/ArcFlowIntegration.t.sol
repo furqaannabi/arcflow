@@ -118,6 +118,7 @@ contract ArcFlowIntegrationTest is Test, Deployers {
         migration.setGatewayMinter(address(gatewayMinter));
 
         stateManager.setAgentAuthorization(agent, true);
+        stateManager.setAgentAuthorization(address(router), true);
         stateManager.setAgentAuthorization(address(migration), true);
         stateManager.configureChain(block.chainid, CIRCLE_DOMAIN, address(router), address(0), true);
 
