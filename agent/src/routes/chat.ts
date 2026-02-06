@@ -233,6 +233,18 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "get_user_address",
+      description: "Get the connected wallet address of the current user. Use this whenever you need the user's address instead of asking them for it.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "get_current_time",
       description: "Get the current date and time in UTC. Use this before setting payroll dates to validate the user is not setting a past date/time.",
       parameters: {
@@ -628,6 +640,19 @@ async function executeTool(
       } catch (error) {
         return { result: JSON.stringify({ error: (error as Error).message }), updatedPayroll: updated };
       }
+    }
+
+    case "get_user_address": {
+      if (!updated.userAddress) {
+        return {
+          result: JSON.stringify({ error: "No wallet connected. The user needs to connect their wallet first." }),
+          updatedPayroll: updated,
+        };
+      }
+      return {
+        result: JSON.stringify({ address: updated.userAddress }),
+        updatedPayroll: updated,
+      };
     }
 
     case "get_current_time": {
