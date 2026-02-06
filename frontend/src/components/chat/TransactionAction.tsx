@@ -81,18 +81,21 @@ export default function TransactionAction({ to, data, description, value = "0" }
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
-        {status === "error" && (
-           <div className="flex items-center gap-2 text-red-600 text-sm flex-1">
-             <AlertCircle className="w-4 h-4" />
-             <span className="truncate">{errorMessage}</span>
-           </div>
-        )}
-        
+      {status === "error" && (
+        <div className="mb-3 p-3 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-900/30 rounded-lg flex items-start gap-2 animate-in fade-in slide-in-from-top-1">
+          <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+          <div className="text-sm text-red-600 dark:text-red-400 break-words">
+            <span className="font-semibold block mb-0.5">Transaction Error</span>
+            {errorMessage}
+          </div>
+        </div>
+      )}
+
+      <div className="flex justify-end">
         <Button 
           onClick={handleSign} 
           disabled={status === "pending"}
-          className={`ml-auto ${status === "error" ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"}`}
+          className={status === "error" ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"}
         >
           {status === "pending" ? (
             <>
@@ -101,7 +104,7 @@ export default function TransactionAction({ to, data, description, value = "0" }
             </>
           ) : (
             <>
-              Sign & Send
+              {status === "error" ? "Retry Transaction" : "Sign & Send"}
               <ArrowRight className="w-4 h-4 ml-2" />
             </>
           )}
