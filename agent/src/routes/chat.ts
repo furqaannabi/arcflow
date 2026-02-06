@@ -688,24 +688,10 @@ Always be helpful, concise, and guide users through the process step by step.
 Format currency amounts clearly (e.g., "1,000 USDC").
 When showing transactions, explain what each one does.`;
 
-// Maximum number of recent messages to send to OpenAI (excluding system prompt)
-const MAX_CONTEXT_MESSAGES = 20;
-
-// Convert MongoDB messages to OpenAI format with context limit
+// Convert MongoDB messages to OpenAI format — send all messages, no truncation
 function toOpenAIMessages(messages: IMessage[]): OpenAI.Chat.ChatCompletionMessageParam[] {
-  // Always keep the system prompt (first message)
-  const systemMessage = messages.find(m => m.role === "system");
-  const nonSystemMessages = messages.filter(m => m.role !== "system");
 
-  // Take only the most recent messages to avoid old context
-  const recentMessages = nonSystemMessages.slice(-MAX_CONTEXT_MESSAGES);
-
-  // Combine system + recent messages
-  const limitedMessages = systemMessage
-    ? [systemMessage, ...recentMessages]
-    : recentMessages;
-
-  return limitedMessages.map((m) => {
+  return messages.map((m) => {
     if (m.role === "tool") {
       return {
         role: "tool" as const,
