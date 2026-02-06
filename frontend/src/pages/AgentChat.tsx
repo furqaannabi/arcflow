@@ -116,7 +116,22 @@ export default function AgentChat() {
       } else {
         // Text only
         const data = await sendRequest(undefined, currentInput);
-        setMessages((prev) => [...prev, { role: "assistant", content: data.response }]);
+        
+        // Check for transactions and append to content so ChatMessage renders it
+        let content = data.response;
+        if (data.transactions && data.transactions.length > 0) {
+          const tx = data.transactions[0];
+          content += `\n\n\`\`\`json\n${JSON.stringify({
+            to: tx.to,
+            data: tx.data,
+            description: tx.description,
+            value: tx.value,
+            payrollDate: tx.payrollDate,
+            recipientCount: tx.recipientCount
+          }, null, 2)}\n\`\`\``;
+        }
+
+        setMessages((prev) => [...prev, { role: "assistant", content }]);
       }
 
     } catch (error) {
