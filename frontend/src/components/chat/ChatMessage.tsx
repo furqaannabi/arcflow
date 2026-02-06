@@ -7,6 +7,7 @@ import TransactionAction from "./TransactionAction";
 interface ChatMessageProps {
   role: "user" | "assistant" | "system";
   content: string;
+  onTransactionSuccess?: (txHash: string) => void;
 }
 
 interface TransactionData {
@@ -18,7 +19,7 @@ interface TransactionData {
   recipientCount?: number;
 }
 
-export default function ChatMessage({ role, content }: ChatMessageProps) {
+export default function ChatMessage({ role, content, onTransactionSuccess }: ChatMessageProps) {
   const isUser = role === "user";
   const isSystem = role === "system";
 
@@ -101,6 +102,7 @@ export default function ChatMessage({ role, content }: ChatMessageProps) {
             data={transaction.data}
             description={transaction.description}
             value={transaction.value}
+            onSuccess={onTransactionSuccess}
           />
         )}
       </div>

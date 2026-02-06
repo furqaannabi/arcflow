@@ -40,14 +40,18 @@ export default function AgentChat() {
     inputRef.current?.focus();
   }, []);
 
-  const handleSendMessage = async () => {
-    if ((!input.trim() && selectedFiles.length === 0) || isLoading) return;
+  const handleSendMessage = async (overrideContent?: string) => {
+    const messageContent = typeof overrideContent === "string" ? overrideContent : input;
+
+    if ((!messageContent.trim() && selectedFiles.length === 0) || isLoading) return;
 
     const currentFiles = [...selectedFiles];
-    const currentInput = input;
+    const currentInput = messageContent;
 
-    // Clear input state immediately
-    setInput("");
+    // Clear input state immediately ONLY IF it was typed input
+    if (!overrideContent) {
+        setInput("");
+    }
     setSelectedFiles([]);
     setIsLoading(true);
 
@@ -190,7 +194,12 @@ export default function AgentChat() {
         <main className="flex-1 overflow-y-auto p-4 md:p-8 space-y-4">
           <div className="max-w-5xl mx-auto w-full flex flex-col">
             {messages.map((msg, idx) => (
-              <ChatMessage key={idx} role={msg.role} content={msg.content} />
+              <ChatMessage 
+                key={idx} 
+                role={msg.role} 
+                content={msg.content} 
+                onTransactionSuccess={(txHash) => handleSendMessage(`Transaction approved! Hash: ${txHash}`)}
+              />
             ))}
             {isLoading && (
               <div className="flex justify-start mb-4">
