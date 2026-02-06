@@ -1,4 +1,6 @@
 import { useMemo } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 import TransactionAction from "./TransactionAction";
 
@@ -70,7 +72,28 @@ export default function ChatMessage({ role, content }: ChatMessageProps) {
             : "bg-gray-100 dark:bg-muted text-gray-800 dark:text-foreground rounded-tl-sm border border-gray-200 dark:border-border"
         )}
       >
-        <div className="whitespace-pre-wrap">{textPart}</div>
+        <div className="markdown-content">
+          <ReactMarkdown 
+            remarkPlugins={[remarkGfm]}
+            components={{
+              ul: ({node, ...props}) => <ul className="list-disc pl-4 my-2 space-y-1" {...props} />,
+              ol: ({node, ...props}) => <ol className="list-decimal pl-4 my-2 space-y-1" {...props} />,
+              li: ({node, ...props}) => <li className="my-0.5" {...props} />,
+              p: ({node, ...props}) => <p className="mb-2 last:mb-0" {...props} />,
+              strong: ({node, ...props}) => <strong className="font-semibold" {...props} />,
+              a: ({node, ...props}) => <a className="text-blue-500 hover:underline" target="_blank" rel="noopener noreferrer" {...props} />,
+              code: ({node, inline, className, children, ...props}: any) => {
+                return inline ? (
+                  <code className="bg-gray-200 dark:bg-gray-800 px-1 py-0.5 rounded text-xs font-mono" {...props}>{children}</code>
+                ) : (
+                  <code className="block bg-gray-200 dark:bg-gray-800 p-2 rounded text-xs font-mono my-2 overflow-x-auto" {...props}>{children}</code>
+                );
+              }
+            }}
+          >
+            {textPart}
+          </ReactMarkdown>
+        </div>
         
         {transaction && (
           <TransactionAction
