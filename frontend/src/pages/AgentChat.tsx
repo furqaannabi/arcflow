@@ -23,7 +23,8 @@ export default function AgentChat() {
   const [input, setInput] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [sessionId] = useState(() => "session-" + Math.random().toString(36).substring(7));
+  // Session ID will be returned by the backend on first message
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -63,7 +64,7 @@ export default function AgentChat() {
         if (file) {
           const formData = new FormData();
           if (msg) formData.append("message", msg);
-          formData.append("sessionId", sessionId);
+          if (sessionId) formData.append("sessionId", sessionId);
           if (userAddress) formData.append("userAddress", userAddress);
           formData.append("file", file);
           body = formData;
@@ -71,7 +72,7 @@ export default function AgentChat() {
         } else {
           body = JSON.stringify({
             message: msg,
-            sessionId,
+            sessionId: sessionId || undefined,
             userAddress,
           });
           headers["Content-Type"] = "application/json";
@@ -87,6 +88,11 @@ export default function AgentChat() {
         
         if (data.error) {
           throw new Error(data.error);
+        }
+
+        // Store session ID if returned
+        if (data.sessionId && !sessionId) {
+            setSessionId(data.sessionId);
         }
 
         return data; // Return full data to handle 'allowFileUpload' if needed
