@@ -42,7 +42,7 @@ export default function CSVUpload({ onFilesSelect, disabled }: CSVUploadProps) {
         variant="outline"
         disabled={disabled}
         onClick={() => fileInputRef.current?.click()}
-        className="flex items-center gap-2 h-full rounded-xl px-4 border-gray-200 text-gray-700 bg-white hover:bg-gray-50 shadow-sm shrink-0"
+        className="flex items-center gap-2 h-full rounded-xl px-4 border-gray-200 dark:border-border text-gray-700 dark:text-foreground bg-white dark:bg-card hover:bg-gray-50 dark:hover:bg-accent shadow-sm shrink-0 transition-colors"
       >
         <Upload className="w-5 h-5" />
         <span className="font-medium hidden sm:inline">Upload CSV</span>

@@ -120,30 +120,30 @@ export default function AgentChat() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
+    <div className="min-h-screen bg-gray-50 dark:bg-background flex transition-colors duration-300">
       <Sidebar />
 
       <div className="flex-1 flex flex-col h-screen">
         {/* Header */}
-        <header className="bg-white border-b border-gray-100 h-16 px-8 flex items-center justify-between shrink-0">
+        <header className="bg-white dark:bg-card border-b border-gray-100 dark:border-border h-16 px-8 flex items-center justify-between shrink-0 transition-colors duration-300">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <Bot className="w-5 h-5 text-blue-600" />
+            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
+              <Bot className="w-5 h-5 text-blue-600 dark:text-blue-400" />
             </div>
-            <h1 className="text-xl font-bold text-gray-900">AI Assistant</h1>
+            <h1 className="text-xl font-bold text-gray-900 dark:text-foreground">AI Assistant</h1>
           </div>
           
           <div className="flex items-center gap-4">
             <ChainSwitcher />
             {isConnected ? (
               <div className="flex items-center gap-2">
-                 <div className="px-3 py-1.5 bg-gray-50 rounded-lg text-sm font-mono text-gray-600 border border-gray-100">
+                 <div className="px-3 py-1.5 bg-gray-50 dark:bg-muted rounded-lg text-sm font-mono text-gray-600 dark:text-foreground border border-gray-100 dark:border-border transition-colors">
                   {userAddress ? `${userAddress.slice(0, 6)}...${userAddress.slice(-4)}` : 'Connected'}
                 </div>
-                 <Button onClick={disconnect} variant="ghost" size="sm" className="text-red-500 hover:text-red-600 hover:bg-red-50">Disconnect</Button>
+                 <Button onClick={disconnect} variant="ghost" size="sm" className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/10">Disconnect</Button>
               </div>
             ) : (
-              <Button onClick={() => connect()} className="bg-blue-600 text-white hover:bg-blue-700">Connect Wallet</Button>
+              <Button onClick={() => connect()} className="bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700">Connect Wallet</Button>
             )}
           </div>
         </header>
@@ -156,10 +156,10 @@ export default function AgentChat() {
             ))}
             {isLoading && (
               <div className="flex justify-start mb-4">
-                 <div className="bg-gray-100 rounded-2xl rounded-tl-sm px-4 py-3 border border-gray-200 flex items-center gap-2">
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                 <div className="bg-gray-100 dark:bg-muted rounded-2xl rounded-tl-sm px-4 py-3 border border-gray-200 dark:border-border flex items-center gap-2 transition-colors duration-300">
+                    <div className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                    <div className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                    <div className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
                  </div>
               </div>
             )}
@@ -168,20 +168,20 @@ export default function AgentChat() {
         </main>
 
         {/* Input Area */}
-        <div className="bg-white border-t border-gray-100 p-6 shrink-0">
+        <div className="bg-white dark:bg-card border-t border-gray-100 dark:border-border p-6 shrink-0 transition-colors duration-300">
           <div className="max-w-5xl mx-auto w-full flex flex-col gap-3">
             {selectedFiles.length > 0 && (
               <div className="flex flex-wrap gap-2 animate-in fade-in slide-in-from-bottom-2">
                 {selectedFiles.map((file, index) => (
-                    <div key={index} className="flex items-center gap-2 bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg border border-blue-100 text-sm">
-                        <div className="p-1 bg-white rounded-md">
-                        <FileText className="w-4 h-4 text-blue-600" />
+                    <div key={index} className="flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 px-3 py-1.5 rounded-lg border border-blue-100 dark:border-blue-800 text-sm">
+                        <div className="p-1 bg-white dark:bg-blue-950 rounded-md">
+                        <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                         </div>
                         <span className="font-medium max-w-[200px] truncate">{file.name}</span>
-                        <span className="text-blue-400 text-xs">({(file.size / 1024).toFixed(1)} KB)</span>
+                        <span className="text-blue-400 dark:text-blue-500 text-xs">({(file.size / 1024).toFixed(1)} KB)</span>
                         <button 
                         onClick={() => removeFile(index)}
-                        className="ml-2 hover:bg-blue-100 p-1 rounded-full transition-colors"
+                        className="ml-2 hover:bg-blue-100 dark:hover:bg-blue-800 p-1 rounded-full transition-colors"
                         >
                         <X className="w-3 h-3" />
                         </button>
@@ -212,10 +212,10 @@ export default function AgentChat() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   placeholder={selectedFiles.length > 0 ? "Add a message with your files..." : "Ask about payroll, yields, or generate a transaction..."}
-                  className="flex-1 px-6 py-4 text-base border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm"
+                  className="flex-1 px-6 py-4 text-base border border-gray-200 dark:border-input rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm bg-transparent dark:text-foreground placeholder:text-muted-foreground"
                   disabled={isLoading}
                 />
-                <Button type="submit" disabled={isLoading || (!input.trim() && selectedFiles.length === 0)} className="bg-blue-600 hover:bg-blue-700 h-full w-14 rounded-xl">
+                <Button type="submit" disabled={isLoading || (!input.trim() && selectedFiles.length === 0)} className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700 text-white h-full w-14 rounded-xl">
                   <Send className="w-5 h-5" />
                 </Button>
               </form>

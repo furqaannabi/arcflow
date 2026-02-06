@@ -55,15 +55,15 @@ const TRANSACTIONS: Transaction[] = [
     amount: '$124.00',
     date: 'July 24, 2024',
     logo: '🏛️',
-    logoBg: 'bg-gray-100',
+    logoBg: 'bg-gray-100 dark:bg-muted',
   },
 ];
 
 export default function RecentTransactions() {
   return (
-    <Card className="shadow-none border border-gray-100 h-full">
+    <Card className="shadow-none border border-gray-100 dark:border-border h-full bg-white dark:bg-card">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-base font-medium">Recent Transactions</CardTitle>
+        <CardTitle className="text-base font-medium text-gray-900 dark:text-foreground">Recent Transactions</CardTitle>
         <button className="text-gray-400 hover:text-gray-600">
           <MoreHorizontal className="w-5 h-5" />
         </button>
@@ -77,12 +77,12 @@ export default function RecentTransactions() {
                   {tx.logo}
                 </div>
                 <div>
-                  <div className="text-sm font-medium text-gray-900">{tx.name}</div>
+                  <div className="text-sm font-medium text-gray-900 dark:text-foreground">{tx.name}</div>
                   <div className="text-xs text-gray-500">{tx.ref}</div>
                 </div>
               </div>
               <div className="text-right">
-                <div className="text-sm font-medium text-gray-900">{tx.amount}</div>
+                <div className="text-sm font-medium text-gray-900 dark:text-foreground">{tx.amount}</div>
                 <div className="text-xs text-gray-400">View</div>
               </div>
             </div>

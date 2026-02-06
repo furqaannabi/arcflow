@@ -14,7 +14,7 @@ export default function StatsCard({ title, value, trend, percentage, label }: St
   const isPositive = trend === "up";
 
   return (
-    <Card className="shadow-none border border-gray-100">
+    <Card className="shadow-none border border-gray-100 dark:border-border bg-white dark:bg-card">
       <CardContent className="p-6">
         <div className="flex items-center justify-between mb-4">
           <span className="text-sm font-medium text-gray-500">{title}</span>
@@ -24,7 +24,7 @@ export default function StatsCard({ title, value, trend, percentage, label }: St
         </div>
 
         <div className="space-y-4">
-          <div className="text-3xl font-semibold text-gray-900">{value}</div>
+          <div className="text-3xl font-semibold text-gray-900 dark:text-foreground">{value}</div>
           
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-400">{label}</span>

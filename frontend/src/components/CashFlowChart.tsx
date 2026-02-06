@@ -19,10 +19,10 @@ const data = [
 
 export default function CashFlowChart() {
   return (
-    <Card className="shadow-none border border-gray-100 h-full">
+    <Card className="shadow-none border border-gray-100 dark:border-border h-full bg-white dark:bg-card">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <div className="flex items-center gap-4">
-          <CardTitle className="text-base font-medium">Treasury Growth</CardTitle>
+          <CardTitle className="text-base font-medium text-gray-900 dark:text-foreground">Treasury Growth</CardTitle>
           <div className="flex items-center gap-3 text-xs">
             <div className="flex items-center gap-1.5">
               <div className="w-2.5 h-2.5 rounded-sm bg-blue-600"></div>
