@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import { toPasskeyTransport, toWebAuthnCredential, toCircleSmartAccount, toModularTransport, WebAuthnMode } from '@circle-fin/modular-wallets-core';
-import { createPublicClient, createWalletClient } from 'viem';
-import { toWebAuthnAccount } from 'viem/account-abstraction';
+import { createPublicClient } from 'viem';
+import { toWebAuthnAccount, bundlerActions } from 'viem/account-abstraction';
 import { polygon, polygonAmoy, arbitrum, arbitrumSepolia, base, baseSepolia, optimism, optimismSepolia, avalanche, avalancheFuji } from 'viem/chains';
 
 // Supported chains based on official Circle Modular Wallets documentation
@@ -229,24 +229,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         owner: toWebAuthnAccount({ credential: activeCredential }),
       });
 
-      // Create bundler/wallet client
-      // Note: we use the smart account as the account
-      const walletClient = createWalletClient({
+      // For Smart Accounts, we must use UserOperations (ERC-4337)
+      // We extend the client with bundler actions.
+      // Note: "paymaster: true" requests gas sponsorship from the Circle Paymaster.
+      const bundlerClient = publicClient.extend(bundlerActions);
+
+      console.log("Sending UserOperation...");
+      const userOpHash = await bundlerClient.sendUserOperation({
         account: smartAccount,
-        chain: selectedChain.chain,
-        transport: modularTransport, 
+        calls: [{
+          to: tx.to as `0x${string}`,
+          data: tx.data as `0x${string}`,
+          value: tx.value || 0n,
+        }],
+        paymaster: true,
       });
 
-      const hash = await walletClient.sendTransaction({
-        account: smartAccount,
-        to: tx.to as `0x${string}`,
-        data: tx.data as `0x${string}`,
-        value: tx.value || 0n,
-        chain: selectedChain.chain, // Explicitly pass chain to be safe
+      console.log('UserOp sent, hash:', userOpHash);
+      console.log('Waiting for receipt...');
+
+      const receipt = await bundlerClient.waitForUserOperationReceipt({
+        hash: userOpHash,
       });
 
-      console.log('Transaction sent:', hash);
-      return hash;
+      console.log('Transaction completed:', receipt.receipt.transactionHash);
+      return receipt.receipt.transactionHash;
     } catch (error) {
       console.error('Failed to send transaction:', error);
       throw error;
