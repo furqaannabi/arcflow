@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { useAuth } from "@/contexts/AuthContext";
+// import { useAuth } from "@/contexts/AuthContext"; // unused
 import Sidebar from "@/components/Sidebar";
-import ChainSwitcher from "@/components/ChainSwitcher";
+import ConnectButton from "@/components/ConnectButton";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import ActivePayrollsTable from "@/components/payroll/ActivePayrollsTable";
@@ -9,8 +9,6 @@ import CreatePayrollModal from "@/components/payroll/CreatePayrollModal";
 import PayrollDetailsModal from "@/components/payroll/PayrollDetailsModal";
 
 export default function Payroll() {
-  const { userAddress, disconnect, isConnected, connect } = useAuth();
-  
   // State for modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [selectedPayrollId, setSelectedPayrollId] = useState<number | null>(null);
@@ -30,22 +28,7 @@ export default function Payroll() {
           <h1 className="text-xl font-bold text-gray-900 dark:text-foreground">Payroll</h1>
           
           <div className="flex items-center gap-4">
-            <ChainSwitcher />
-            
-            {isConnected ? (
-              <>
-                <div className="px-3 py-1.5 bg-gray-50 dark:bg-muted rounded-lg text-sm font-mono text-gray-600 dark:text-foreground border border-gray-100 dark:border-border min-w-[140px] text-center transition-colors">
-                  {userAddress ? `${userAddress.slice(0, 6)}...${userAddress.slice(-4)}` : 'Connecting...'}
-                </div>
-                <Button onClick={disconnect} variant="ghost" size="sm" className="text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-gray-100 dark:hover:bg-red-900/10">
-                  Disconnect
-                </Button>
-              </>
-            ) : (
-              <Button onClick={() => connect()} className="bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700">
-                Connect Wallet
-              </Button>
-            )}
+            <ConnectButton />
           </div>
         </header>
 

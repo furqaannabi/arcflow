@@ -27,11 +27,6 @@ export default function Landing() {
           </div>
 
           <div className="flex items-center gap-4">
-            {!isConnected && (
-              <Button variant="ghost" className="text-gray-600 dark:text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400" onClick={() => connect()}>
-                Sign In
-              </Button>
-            )}
             <ConnectButton />
           </div>
         </div>

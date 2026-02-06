@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import ChatMessage from "@/components/chat/ChatMessage";
 import CSVUpload from "@/components/chat/CSVUpload";
 import Sidebar from "@/components/Sidebar";
-import ChainSwitcher from "@/components/ChainSwitcher";
+import ConnectButton from "@/components/ConnectButton";
 
 // Define message type locally matching what ChatMessage expects
 interface Message {
@@ -16,7 +16,7 @@ interface Message {
 const AGENT_API_URL = "http://localhost:3001";
 
 export default function AgentChat() {
-  const { userAddress, isConnected, connect, disconnect } = useAuth();
+  const { userAddress } = useAuth();
   const [messages, setMessages] = useState<Message[]>([
     // { role: "assistant", content: "Hello! I'm ArcFlow Agent. I can help you manage your payrolls. You can ask me to set a payroll date, calculate yields, or upload an employee CSV." }
   ]);
@@ -182,17 +182,7 @@ export default function AgentChat() {
           </div>
           
           <div className="flex items-center gap-4">
-            <ChainSwitcher />
-            {isConnected ? (
-              <div className="flex items-center gap-2">
-                 <div className="px-3 py-1.5 bg-gray-50 dark:bg-muted rounded-lg text-sm font-mono text-gray-600 dark:text-foreground border border-gray-100 dark:border-border transition-colors">
-                  {userAddress ? `${userAddress.slice(0, 6)}...${userAddress.slice(-4)}` : 'Connected'}
-                </div>
-                 <Button onClick={disconnect} variant="ghost" size="sm" className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/10">Disconnect</Button>
-              </div>
-            ) : (
-              <Button onClick={() => connect()} className="bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700">Connect Wallet</Button>
-            )}
+            <ConnectButton />
           </div>
         </header>
 
