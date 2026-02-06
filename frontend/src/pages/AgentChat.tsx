@@ -18,7 +18,7 @@ const AGENT_API_URL = "http://localhost:3001";
 export default function AgentChat() {
   const { userAddress, isConnected, connect, disconnect } = useAuth();
   const [messages, setMessages] = useState<Message[]>([
-    { role: "assistant", content: "Hello! I'm ArcFlow Agent. I can help you manage your payrolls. You can ask me to set a payroll date, calculate yields, or upload an employee CSV." }
+    // { role: "assistant", content: "Hello! I'm ArcFlow Agent. I can help you manage your payrolls. You can ask me to set a payroll date, calculate yields, or upload an employee CSV." }
   ]);
   const [input, setInput] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -35,84 +35,85 @@ export default function AgentChat() {
   }, [messages]);
 
   const handleSendMessage = async () => {
-    if (!input.trim() || isLoading) return;
+    if ((!input.trim() && selectedFiles.length === 0) || isLoading) return;
 
-    const userMsg: Message = { role: "user", content: input };
-    setMessages((prev) => [...prev, userMsg]);
+    const currentFiles = [...selectedFiles];
+    const currentInput = input;
+
+    // Clear input state immediately
     setInput("");
+    setSelectedFiles([]);
     setIsLoading(true);
+
+    // Optimistically add user message
+    const userMsg: Message = { role: "user", content: currentInput || (currentFiles.length > 0 ? `Uploaded ${currentFiles.length} file(s)` : "") };
+    setMessages((prev) => [...prev, userMsg]);
 
     try {
-      const response = await fetch(`${AGENT_API_URL}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: userMsg.content,
-          sessionId,
-          userAddress,
-        }),
-      });
+      // Helper to send a single request
+      const sendRequest = async (file?: File, msg?: string) => {
+        let body;
+        const headers: Record<string, string> = {};
 
-      const data = await response.json();
-      
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      setMessages((prev) => [...prev, { role: "assistant", content: data.response }]);
-    } catch (error) {
-      console.error("Chat error:", error);
-      setMessages((prev) => [...prev, { role: "system", content: "Error: Failed to communicate with agent." }]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleCSVUpload = async (files: File[]) => {
-    setIsLoading(true);
-    setSelectedFiles([]); // Clear selection immediately
-
-    for (const file of files) {
-        const systemMsg: Message = { role: "system", content: `Uploading ${file.name}...` };
-        setMessages((prev) => [...prev, systemMsg]);
-
-        try {
-        const fileContent = await file.text();
-        
-        // Basic Validation: Check for headers
-        const firstLine = fileContent.split('\n')[0].toLowerCase();
-        if (!firstLine.includes('address') || !firstLine.includes('amount')) {
-            throw new Error(`Invalid CSV format in ${file.name}. Please ensure headers 'address' and 'amount' exist.`);
+        if (file) {
+          const formData = new FormData();
+          if (msg) formData.append("message", msg);
+          formData.append("sessionId", sessionId);
+          if (userAddress) formData.append("userAddress", userAddress);
+          formData.append("file", file);
+          body = formData;
+          // Content-Type header is set automatically for FormData
+        } else {
+          body = JSON.stringify({
+            message: msg,
+            sessionId,
+            userAddress,
+          });
+          headers["Content-Type"] = "application/json";
         }
 
-        const response = await fetch(`${AGENT_API_URL}/api/upload-csv`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-            csvData: fileContent,
-            sessionId,
-            }),
+        const response = await fetch(`${AGENT_API_URL}/api/chat`, {
+          method: "POST",
+          headers,
+          body,
         });
 
         const data = await response.json();
-
+        
         if (data.error) {
-            throw new Error(data.error);
+          throw new Error(data.error);
         }
 
-        const responseText = data.success 
-            ? `Successfully parsed ${file.name}. Found ${data.recipientCount} recipients. Total: ${data.totalAmountUsdc} USDC.`
-            : `Failed to parse ${file.name}.`;
+        return data; // Return full data to handle 'allowFileUpload' if needed
+      };
 
-        setMessages((prev) => [...prev, { role: "assistant", content: responseText }]);
+      if (currentFiles.length > 0) {
+        // Send files sequentially
+        for (let i = 0; i < currentFiles.length; i++) {
+          const file = currentFiles[i];
+          // Attach text input only to the first file request
+          const msgToSend = i === 0 ? currentInput : undefined; 
+          
+          // Add system message for upload progress
+          if (currentFiles.length > 1) {
+             setMessages((prev) => [...prev, { role: "system", content: `Uploading ${file.name}...` }]);
+          }
 
-        } catch (error) {
-        console.error(`Upload error for ${file.name}:`, error);
-        setMessages((prev) => [...prev, { role: "system", content: `Error: ${(error as Error).message || "Failed to upload CSV."}` }]);
+          const data = await sendRequest(file, msgToSend);
+          setMessages((prev) => [...prev, { role: "assistant", content: data.response }]);
         }
+      } else {
+        // Text only
+        const data = await sendRequest(undefined, currentInput);
+        setMessages((prev) => [...prev, { role: "assistant", content: data.response }]);
+      }
+
+    } catch (error) {
+      console.error("Chat error:", error);
+      setMessages((prev) => [...prev, { role: "system", content: `Error: ${(error as Error).message || "Failed to communicate with agent."}` }]);
+    } finally {
+      setIsLoading(false);
     }
-    
-    setIsLoading(false);
   };
 
   const removeFile = (index: number) => {
@@ -200,11 +201,7 @@ export default function AgentChat() {
                 className="flex-1 flex gap-3"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  if (selectedFiles.length > 0) {
-                    handleCSVUpload(selectedFiles);
-                  } else {
-                    handleSendMessage();
-                  }
+                  handleSendMessage();
                 }}
               >
                 <input
