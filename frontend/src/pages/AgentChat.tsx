@@ -28,12 +28,6 @@ function WelcomeScreen({ onSuggestionClick }: { onSuggestionClick: (text: string
       text: "Draft a new payroll",
       prompt: "I want to draft a new payroll for my team.",
       color: "text-blue-500 bg-blue-50 dark:bg-blue-900/20 dark:text-blue-400"
-    },
-    {
-      icon: FileText,
-      text: "Upload employee CSV",
-      prompt: "I have an employee CSV file to upload.",
-      color: "text-purple-500 bg-purple-50 dark:bg-purple-900/20 dark:text-purple-400"
     }
   ];
 
@@ -49,7 +43,7 @@ function WelcomeScreen({ onSuggestionClick }: { onSuggestionClick: (text: string
         I can help you manage payrolls, optimize yields, and execute cross-chain transactions seamlessly.
       </p>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-2xl">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-2xl">
         {suggestions.map((s, i) => (
           <button
             key={i}
