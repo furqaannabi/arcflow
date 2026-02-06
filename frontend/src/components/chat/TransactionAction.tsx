@@ -8,9 +8,10 @@ interface TransactionActionProps {
   data: string;
   description: string;
   value?: string; // Optional value in wei
+  onSuccess?: (txHash: string) => void;
 }
 
-export default function TransactionAction({ to, data, description, value = "0" }: TransactionActionProps) {
+export default function TransactionAction({ to, data, description, value = "0", onSuccess }: TransactionActionProps) {
   const { isConnected, connect, sendTransaction, currentChain } = useAuth(); // Assuming sendTransaction will be added
   const [status, setStatus] = useState<"idle" | "pending" | "success" | "error">("idle");
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -38,6 +39,9 @@ export default function TransactionAction({ to, data, description, value = "0" }
 
       setTxHash(hash);
       setStatus("success");
+      if (onSuccess) {
+        onSuccess(hash);
+      }
     } catch (error) {
       console.error("Transaction failed:", error);
       setStatus("error");
