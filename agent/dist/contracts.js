@@ -1,146 +1,22 @@
 import { createPublicClient, http, formatUnits, } from "viem";
-import { sepolia } from "viem/chains";
-// Contract addresses on Sepolia (from foundry deployment)
+import { baseSepolia } from "viem/chains";
+import addressesJson from "./addresses.json" with { type: "json" };
+import abis from "./abis.json" with { type: "json" };
 const ADDRESSES = {
-    router: "0x466cb61cda7e16f3e66c45762b825808cd689feb",
-    stateManager: "0x83c29b0c971b649f60aff89b7878fb6c0c712dfe",
-    usdc: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
-    usdt: "0x7169D38820dfd117C3FA1f22a697dBA58d90BA06",
+    router: addressesJson.baseSepolia.router,
+    stateManager: addressesJson.baseSepolia.stateManager,
+    migration: addressesJson.baseSepolia.migration,
+    usdc: addressesJson.baseSepolia.usdc,
+    usdt: addressesJson.baseSepolia.usdt,
 };
-// ABI fragments for the functions we need
-const ROUTER_ABI = [
-    {
-        name: "deposit",
-        type: "function",
-        stateMutability: "nonpayable",
-        inputs: [
-            { name: "usdcAmount", type: "uint256" },
-            { name: "payrollDate", type: "uint256" },
-            {
-                name: "recipients",
-                type: "tuple[]",
-                components: [
-                    { name: "wallet", type: "address" },
-                    { name: "amount", type: "uint256" },
-                ],
-            },
-        ],
-        outputs: [
-            { name: "payrollId", type: "uint256" },
-            { name: "liquidity", type: "uint128" },
-        ],
-    },
-    {
-        name: "getReadyPayrolls",
-        type: "function",
-        stateMutability: "view",
-        inputs: [],
-        outputs: [{ name: "", type: "uint256[]" }],
-    },
-    {
-        name: "isPayrollReady",
-        type: "function",
-        stateMutability: "view",
-        inputs: [{ name: "payrollId", type: "uint256" }],
-        outputs: [{ name: "", type: "bool" }],
-    },
-    {
-        name: "executeReadyPayrolls",
-        type: "function",
-        stateMutability: "nonpayable",
-        inputs: [],
-        outputs: [
-            { name: "executed", type: "uint256" },
-            { name: "totalBridged", type: "uint256" },
-        ],
-    },
-    {
-        name: "getPosition",
-        type: "function",
-        stateMutability: "view",
-        inputs: [{ name: "payrollId", type: "uint256" }],
-        outputs: [
-            {
-                name: "",
-                type: "tuple",
-                components: [
-                    { name: "payrollId", type: "uint256" },
-                    { name: "provider", type: "address" },
-                    { name: "liquidity", type: "uint128" },
-                    { name: "usdcDeposited", type: "uint256" },
-                    { name: "depositTime", type: "uint256" },
-                    { name: "payrollDate", type: "uint256" },
-                    { name: "payrollStateHash", type: "bytes32" },
-                    { name: "accumulatedYield", type: "uint256" },
-                    { name: "sourceChainId", type: "uint256" },
-                    { name: "currentChainId", type: "uint256" },
-                    { name: "migrationCount", type: "uint256" },
-                    { name: "recipientsHash", type: "bytes32" },
-                ],
-            },
-        ],
-    },
-    {
-        name: "getProviderPositions",
-        type: "function",
-        stateMutability: "view",
-        inputs: [{ name: "provider", type: "address" }],
-        outputs: [
-            {
-                name: "",
-                type: "tuple[]",
-                components: [
-                    { name: "payrollId", type: "uint256" },
-                    { name: "provider", type: "address" },
-                    { name: "liquidity", type: "uint128" },
-                    { name: "usdcDeposited", type: "uint256" },
-                    { name: "depositTime", type: "uint256" },
-                    { name: "payrollDate", type: "uint256" },
-                    { name: "payrollStateHash", type: "bytes32" },
-                    { name: "accumulatedYield", type: "uint256" },
-                    { name: "sourceChainId", type: "uint256" },
-                    { name: "currentChainId", type: "uint256" },
-                    { name: "migrationCount", type: "uint256" },
-                    { name: "recipientsHash", type: "bytes32" },
-                ],
-            },
-        ],
-    },
-];
-const ERC20_ABI = [
-    {
-        name: "approve",
-        type: "function",
-        stateMutability: "nonpayable",
-        inputs: [
-            { name: "spender", type: "address" },
-            { name: "amount", type: "uint256" },
-        ],
-        outputs: [{ name: "", type: "bool" }],
-    },
-    {
-        name: "allowance",
-        type: "function",
-        stateMutability: "view",
-        inputs: [
-            { name: "owner", type: "address" },
-            { name: "spender", type: "address" },
-        ],
-        outputs: [{ name: "", type: "uint256" }],
-    },
-    {
-        name: "balanceOf",
-        type: "function",
-        stateMutability: "view",
-        inputs: [{ name: "account", type: "address" }],
-        outputs: [{ name: "", type: "uint256" }],
-    },
-];
+const ROUTER_ABI = abis.router;
+const ERC20_ABI = abis.erc20;
+const MIGRATION_ABI = abis.migration;
 export class ContractService {
     client;
     constructor(rpcUrl) {
         this.client = createPublicClient({
-            chain: sepolia,
+            chain: baseSepolia,
             transport: http(rpcUrl),
         });
     }
@@ -227,6 +103,16 @@ export class ContractService {
         });
         return ready;
     }
+    // Get all active payroll IDs
+    async getActivePayrollIds() {
+        const ids = await this.client.readContract({
+            address: ADDRESSES.router,
+            abi: ROUTER_ABI,
+            functionName: "getActivePayrollIds",
+            args: [],
+        });
+        return ids;
+    }
     // Generate calldata for executing ready payrolls
     generateExecuteReadyPayrollsCalldata() {
         const { encodeFunctionData } = require("viem");
@@ -236,6 +122,40 @@ export class ContractService {
                 abi: ROUTER_ABI,
                 functionName: "executeReadyPayrolls",
                 args: [],
+            }),
+        };
+    }
+    // Check if a payroll should migrate to a better yield chain
+    async shouldMigrate(payrollId) {
+        const result = await this.client.readContract({
+            address: ADDRESSES.migration,
+            abi: MIGRATION_ABI,
+            functionName: "shouldMigrate",
+            args: [payrollId],
+        });
+        return { migrate: result[0], targetChain: result[1], apyDiff: result[2] };
+    }
+    // Generate calldata for migrate out
+    generateMigrateOutCalldata(payrollId, targetChainId) {
+        const { encodeFunctionData } = require("viem");
+        return {
+            to: ADDRESSES.migration,
+            data: encodeFunctionData({
+                abi: MIGRATION_ABI,
+                functionName: "migrateOut",
+                args: [payrollId, targetChainId],
+            }),
+        };
+    }
+    // Generate calldata for migrate in
+    generateMigrateInCalldata(payrollId, fromChainId, amount, attestation, signature) {
+        const { encodeFunctionData } = require("viem");
+        return {
+            to: ADDRESSES.migration,
+            data: encodeFunctionData({
+                abi: MIGRATION_ABI,
+                functionName: "migrateIn",
+                args: [payrollId, fromChainId, amount, attestation, signature],
             }),
         };
     }

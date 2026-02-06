@@ -15,6 +15,7 @@ import { privateKeyToAccount, signMessage } from "viem/accounts";
 import { baseSepolia, sepolia } from "viem/chains";
 import { DefiLlamaService } from "./defillama";
 import { getRpcUrl, CHAIN_IDS } from "./config";
+import { YellowChunkingService } from "./yellow";
 import addressesJson from "./addresses.json" with { type: "json" };
 import abis from "./abis.json" with { type: "json" };
 
@@ -111,22 +112,66 @@ export interface RebalancingOpportunity {
  * Autonomous Payroll Cron - runs every minute, checks and executes ready payrolls
  * Also monitors APY across chains every 6 hours and handles rebalancing
  * Supports multiple chains (Base Sepolia, Sepolia)
+ * Integrates with Yellow Network SDK for state channel execution
  */
 export class PayrollCron {
   private privateKey: string | undefined;
+  private alchemyApiKey: string | undefined;
   private intervalId: NodeJS.Timeout | null = null;
   private apyIntervalId: NodeJS.Timeout | null = null;
   private results: CronResult[] = [];
   private apyResults: ApyUpdateResult[] = [];
   private rebalanceResults: RebalanceResult[] = [];
   private defiLlamaService: DefiLlamaService;
+  private yellowService: YellowChunkingService;
+  private yellowInitialized: boolean = false;
 
   // Minimum APY difference to trigger rebalance (0.5% = 50 basis points)
   private readonly MIN_APY_DIFF_FOR_REBALANCE = 0.5;
 
-  constructor(privateKey?: string) {
+  // Enable Yellow Network state channel execution
+  private useYellowChannels: boolean = true;
+
+  constructor(privateKey?: string, alchemyApiKey?: string) {
     this.privateKey = privateKey;
+    this.alchemyApiKey = alchemyApiKey || process.env.ALCHEMY_API_KEY;
     this.defiLlamaService = new DefiLlamaService();
+    this.yellowService = new YellowChunkingService(privateKey, this.alchemyApiKey);
+  }
+
+  /**
+   * Initialize Yellow Network SDK connection
+   * Called once on startup
+   */
+  async initializeYellowSDK(): Promise<void> {
+    if (this.yellowInitialized) {
+      return;
+    }
+
+    try {
+      console.log("[CRON] Initializing Yellow Network SDK...");
+      await this.yellowService.initializeSDK();
+      this.yellowInitialized = true;
+      console.log("[CRON] Yellow Network SDK ready");
+    } catch (error) {
+      console.error("[CRON] Failed to initialize Yellow SDK:", error);
+      console.log("[CRON] Will fallback to direct execution");
+      this.useYellowChannels = false;
+    }
+  }
+
+  /**
+   * Check if Yellow SDK is ready for channel operations
+   */
+  isYellowReady(): boolean {
+    return this.yellowInitialized && this.yellowService.isSDKReady();
+  }
+
+  /**
+   * Get Yellow service instance
+   */
+  getYellowService(): YellowChunkingService {
+    return this.yellowService;
   }
 
   /**
@@ -513,7 +558,7 @@ export class PayrollCron {
   /**
    * Start the cron (runs every minute by default)
    */
-  start(intervalMs: number = 60000) {
+  async start(intervalMs: number = 60000) {
     if (this.intervalId) {
       console.log("[CRON] Already running");
       return;
@@ -525,6 +570,13 @@ export class PayrollCron {
       console.log(`[CRON]   - ${chain.name}: Router ${chain.router}`);
     }
     console.log(`[CRON] Auto-execute: ${this.privateKey ? "enabled" : "disabled (no private key)"}`);
+
+    // Initialize Yellow Network SDK if private key is available
+    if (this.privateKey && this.useYellowChannels) {
+      await this.initializeYellowSDK();
+    }
+
+    console.log(`[CRON] Yellow Network channels: ${this.isYellowReady() ? "enabled" : "disabled"}`);
 
     // Run immediately
     this.tick();
@@ -605,12 +657,13 @@ export class PayrollCron {
 /**
  * Start standalone cron (for running as separate process)
  */
-export function startStandaloneCron() {
+export async function startStandaloneCron() {
   const privateKey = process.env.AGENT_PRIVATE_KEY;
+  const alchemyApiKey = process.env.ALCHEMY_API_KEY;
   const interval = parseInt(process.env.CRON_INTERVAL || "60000");
 
-  const cron = new PayrollCron(privateKey);
-  cron.start(interval);
+  const cron = new PayrollCron(privateKey, alchemyApiKey);
+  await cron.start(interval);
 
   // Graceful shutdown
   process.on("SIGINT", () => {

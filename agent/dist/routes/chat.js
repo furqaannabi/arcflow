@@ -2,12 +2,13 @@ import { Router } from "express";
 import OpenAI from "openai";
 import { parse } from "csv-parse/sync";
 import { parseUnits } from "viem";
-import { ContractService } from "../contracts.js";
-import { DefiLlamaService } from "../defillama.js";
-import { YellowNetworkService } from "../yellow.js";
+import { ContractService } from "../contracts";
+import { DefiLlamaService } from "../defillama";
+import { YellowNetworkService } from "../yellow";
 const router = Router();
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
+    baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
 });
 const contractService = new ContractService(process.env.RPC_URL);
 const defiLlamaService = new DefiLlamaService();
@@ -62,7 +63,7 @@ const tools = [
                 properties: {
                     chain: {
                         type: "string",
-                        description: "Blockchain to check yields on (e.g., Ethereum, Arbitrum)",
+                        description: "Blockchain to check yields on (e.g., Ethereum, Base)",
                     },
                 },
                 required: [],
@@ -512,7 +513,7 @@ router.post("/chat", async (req, res) => {
         }
         // Call OpenAI with tools
         let response = await openai.chat.completions.create({
-            model: "gpt-4-turbo-preview",
+            model: "gemini-2.5-flash",
             messages,
             tools,
             tool_choice: "auto",
@@ -533,7 +534,7 @@ router.post("/chat", async (req, res) => {
             }
             // Get next response
             response = await openai.chat.completions.create({
-                model: "gpt-4-turbo-preview",
+                model: "gemini-2.5-flash",
                 messages,
                 tools,
                 tool_choice: "auto",

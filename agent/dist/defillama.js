@@ -49,7 +49,7 @@ export class DefiLlamaService {
         return [
             { project: "Aave V3", chain: "Ethereum", apy: 4.5, tvl: 500000000, symbol: "USDC" },
             { project: "Compound V3", chain: "Ethereum", apy: 4.2, tvl: 400000000, symbol: "USDC" },
-            { project: "Aave V3", chain: "Arbitrum", apy: 5.1, tvl: 200000000, symbol: "USDC" },
+            { project: "Aave V3", chain: "Base", apy: 5.1, tvl: 200000000, symbol: "USDC" },
             { project: "Uniswap V3", chain: "Ethereum", apy: 3.8, tvl: 150000000, symbol: "USDC-USDT" },
             { project: "Curve", chain: "Ethereum", apy: 3.5, tvl: 300000000, symbol: "USDC-USDT" },
         ];

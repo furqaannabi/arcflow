@@ -30,12 +30,27 @@ export declare class ContractService {
     getAddresses(): {
         router: Address;
         stateManager: Address;
+        migration: Address;
         usdc: Address;
         usdt: Address;
     };
     getReadyPayrolls(): Promise<bigint[]>;
     isPayrollReady(payrollId: bigint): Promise<boolean>;
+    getActivePayrollIds(): Promise<bigint[]>;
     generateExecuteReadyPayrollsCalldata(): {
+        to: Address;
+        data: string;
+    };
+    shouldMigrate(payrollId: bigint): Promise<{
+        migrate: boolean;
+        targetChain: bigint;
+        apyDiff: bigint;
+    }>;
+    generateMigrateOutCalldata(payrollId: bigint, targetChainId: bigint): {
+        to: Address;
+        data: string;
+    };
+    generateMigrateInCalldata(payrollId: bigint, fromChainId: bigint, amount: bigint, attestation: `0x${string}`, signature: `0x${string}`): {
         to: Address;
         data: string;
     };

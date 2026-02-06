@@ -1,76 +1,169 @@
 import { createPublicClient, createWalletClient, http, } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { sepolia } from "viem/chains";
-// Contract address
-const ROUTER_ADDRESS = "0x466cb61cda7e16f3e66c45762b825808cd689feb";
-const ROUTER_ABI = [
+import { baseSepolia, sepolia } from "viem/chains";
+import { DefiLlamaService } from "./defillama";
+import { getRpcUrl, CHAIN_IDS } from "./config";
+import { YellowChunkingService } from "./yellow";
+import addressesJson from "./addresses.json" with { type: "json" };
+import abis from "./abis.json" with { type: "json" };
+const ROUTER_ABI = abis.router;
+const STATE_MANAGER_ABI = abis.stateManager;
+const MIGRATION_ABI = abis.migration;
+const DISTRIBUTOR_ABI = abis.distributor;
+const CHAIN_CONFIGS = [
     {
-        name: "getReadyPayrolls",
-        type: "function",
-        stateMutability: "view",
-        inputs: [],
-        outputs: [{ name: "", type: "uint256[]" }],
+        id: CHAIN_IDS.BASE_SEPOLIA,
+        name: "Base Sepolia",
+        chain: baseSepolia,
+        router: addressesJson.baseSepolia.router,
+        stateManager: addressesJson.baseSepolia.stateManager,
+        migration: addressesJson.baseSepolia.migration,
+        defiLlamaName: "Base",
     },
     {
-        name: "executeReadyPayrolls",
-        type: "function",
-        stateMutability: "nonpayable",
-        inputs: [],
-        outputs: [
-            { name: "executed", type: "uint256" },
-            { name: "totalBridged", type: "uint256" },
-        ],
+        id: CHAIN_IDS.SEPOLIA,
+        name: "Sepolia",
+        chain: sepolia,
+        router: addressesJson.sepolia.router,
+        stateManager: addressesJson.sepolia.stateManager,
+        migration: addressesJson.sepolia.migration,
+        defiLlamaName: "Ethereum",
     },
 ];
+// Arc Chain config for distribution
+const ARC_CHAIN = {
+    id: CHAIN_IDS.ARC_TESTNET,
+    name: "Arc Testnet",
+    distributor: addressesJson.arcTestnet.distributor,
+};
 /**
  * Autonomous Payroll Cron - runs every minute, checks and executes ready payrolls
+ * Also monitors APY across chains every 6 hours and handles rebalancing
+ * Supports multiple chains (Base Sepolia, Sepolia)
+ * Integrates with Yellow Network SDK for state channel execution
  */
 export class PayrollCron {
-    rpcUrl;
     privateKey;
+    alchemyApiKey;
     intervalId = null;
+    apyIntervalId = null;
     results = [];
-    constructor(rpcUrl, privateKey) {
-        this.rpcUrl = rpcUrl || "https://sepolia.drpc.org";
+    apyResults = [];
+    rebalanceResults = [];
+    defiLlamaService;
+    yellowService;
+    yellowInitialized = false;
+    // Minimum APY difference to trigger rebalance (0.5% = 50 basis points)
+    MIN_APY_DIFF_FOR_REBALANCE = 0.5;
+    // Enable Yellow Network state channel execution
+    useYellowChannels = true;
+    constructor(privateKey, alchemyApiKey) {
         this.privateKey = privateKey;
+        this.alchemyApiKey = alchemyApiKey || process.env.ALCHEMY_API_KEY;
+        this.defiLlamaService = new DefiLlamaService();
+        this.yellowService = new YellowChunkingService(privateKey, this.alchemyApiKey);
     }
     /**
-     * Check for ready payrolls
+     * Initialize Yellow Network SDK connection
+     * Called once on startup
      */
-    async checkReadyPayrolls() {
-        const client = createPublicClient({
-            chain: sepolia,
-            transport: http(this.rpcUrl),
+    async initializeYellowSDK() {
+        if (this.yellowInitialized) {
+            return;
+        }
+        try {
+            console.log("[CRON] Initializing Yellow Network SDK...");
+            await this.yellowService.initializeSDK();
+            this.yellowInitialized = true;
+            console.log("[CRON] Yellow Network SDK ready");
+        }
+        catch (error) {
+            console.error("[CRON] Failed to initialize Yellow SDK:", error);
+            console.log("[CRON] Will fallback to direct execution");
+            this.useYellowChannels = false;
+        }
+    }
+    /**
+     * Check if Yellow SDK is ready for channel operations
+     */
+    isYellowReady() {
+        return this.yellowInitialized && this.yellowService.isSDKReady();
+    }
+    /**
+     * Get Yellow service instance
+     */
+    getYellowService() {
+        return this.yellowService;
+    }
+    /**
+     * Get public client for a specific chain
+     */
+    getClient(chainConfig) {
+        return createPublicClient({
+            chain: chainConfig.chain,
+            transport: http(getRpcUrl(chainConfig.id)),
         });
+    }
+    /**
+     * Get wallet client for a specific chain
+     */
+    getWalletClient(chainConfig) {
+        if (!this.privateKey) {
+            throw new Error("Private key not configured");
+        }
+        const account = privateKeyToAccount(this.privateKey);
+        return createWalletClient({
+            account,
+            chain: chainConfig.chain,
+            transport: http(getRpcUrl(chainConfig.id)),
+        });
+    }
+    /**
+     * Check for ready payrolls on a specific chain
+     */
+    async checkReadyPayrollsOnChain(chainConfig) {
+        const client = this.getClient(chainConfig);
         const readyIds = await client.readContract({
-            address: ROUTER_ADDRESS,
+            address: chainConfig.router,
             abi: ROUTER_ABI,
             functionName: "getReadyPayrolls",
         });
         return readyIds;
     }
     /**
-     * Execute all ready payrolls
+     * Check for ready payrolls across all chains
      */
-    async executeReadyPayrolls() {
-        if (!this.privateKey) {
-            throw new Error("Private key not configured");
+    async checkReadyPayrolls() {
+        const results = [];
+        for (const chainConfig of CHAIN_CONFIGS) {
+            try {
+                const readyIds = await this.checkReadyPayrollsOnChain(chainConfig);
+                results.push({
+                    chainId: chainConfig.id,
+                    chainName: chainConfig.name,
+                    readyIds,
+                });
+            }
+            catch (error) {
+                console.error(`[CRON] Error checking ${chainConfig.name}:`, error.message);
+            }
         }
-        const account = privateKeyToAccount(this.privateKey);
-        const walletClient = createWalletClient({
-            account,
-            chain: sepolia,
-            transport: http(this.rpcUrl),
-        });
+        return results;
+    }
+    /**
+     * Execute all ready payrolls on a specific chain
+     */
+    async executeReadyPayrollsOnChain(chainConfig) {
+        const walletClient = this.getWalletClient(chainConfig);
         const hash = await walletClient.writeContract({
-            address: ROUTER_ADDRESS,
+            address: chainConfig.router,
             abi: ROUTER_ABI,
             functionName: "executeReadyPayrolls",
         });
         return hash;
     }
     /**
-     * Single cron tick - check and execute
+     * Single cron tick - check and execute across all chains
      */
     async tick() {
         const result = {
@@ -79,19 +172,24 @@ export class PayrollCron {
             executed: false,
         };
         try {
-            const readyIds = await this.checkReadyPayrolls();
-            result.readyCount = readyIds.length;
-            if (readyIds.length > 0) {
-                console.log(`[CRON] Found ${readyIds.length} ready payroll(s): ${readyIds.map(id => id.toString()).join(", ")}`);
-                if (this.privateKey) {
-                    console.log("[CRON] Executing ready payrolls...");
-                    const txHash = await this.executeReadyPayrolls();
-                    result.executed = true;
-                    result.txHash = txHash;
-                    console.log(`[CRON] Executed! TX: ${txHash}`);
-                }
-                else {
-                    console.log("[CRON] No private key configured - skipping execution");
+            const allChainResults = await this.checkReadyPayrolls();
+            for (const chainResult of allChainResults) {
+                result.readyCount += chainResult.readyIds.length;
+                if (chainResult.readyIds.length > 0) {
+                    console.log(`[CRON] ${chainResult.chainName}: Found ${chainResult.readyIds.length} ready payroll(s): ${chainResult.readyIds.map(id => id.toString()).join(", ")}`);
+                    if (this.privateKey) {
+                        const chainConfig = CHAIN_CONFIGS.find(c => c.id === chainResult.chainId);
+                        if (chainConfig) {
+                            console.log(`[CRON] ${chainResult.chainName}: Executing ready payrolls...`);
+                            const txHash = await this.executeReadyPayrollsOnChain(chainConfig);
+                            result.executed = true;
+                            result.txHash = txHash;
+                            console.log(`[CRON] ${chainResult.chainName}: Executed! TX: ${txHash}`);
+                        }
+                    }
+                    else {
+                        console.log("[CRON] No private key configured - skipping execution");
+                    }
                 }
             }
         }
@@ -106,20 +204,258 @@ export class PayrollCron {
         return result;
     }
     /**
+     * Fetch APY rates from DefiLlama and update StateManager on all chains
+     */
+    async updateApyRates() {
+        const result = {
+            timestamp: new Date(),
+            chainsUpdated: 0,
+            apyData: [],
+        };
+        try {
+            console.log("[APY] Fetching APY rates from DefiLlama...");
+            const chainNames = CHAIN_CONFIGS.map((c) => c.defiLlamaName);
+            const apyMap = await this.defiLlamaService.getApyForChains(chainNames);
+            const chainIds = [];
+            const apys = [];
+            for (const chain of CHAIN_CONFIGS) {
+                const yieldData = apyMap.get(chain.defiLlamaName);
+                if (yieldData) {
+                    // Convert APY percentage to basis points (e.g., 5.5% -> 550)
+                    const apyBps = Math.floor(yieldData.apy * 100);
+                    chainIds.push(BigInt(chain.id));
+                    apys.push(BigInt(apyBps));
+                    result.apyData.push({
+                        chainId: chain.id,
+                        chainName: chain.name,
+                        apy: yieldData.apy,
+                    });
+                    console.log(`[APY] ${chain.name}: ${yieldData.apy.toFixed(2)}% (${yieldData.project})`);
+                }
+            }
+            // Update APY on all chains' StateManagers
+            if (chainIds.length > 0 && this.privateKey) {
+                for (const chainConfig of CHAIN_CONFIGS) {
+                    try {
+                        const walletClient = this.getWalletClient(chainConfig);
+                        const hash = await walletClient.writeContract({
+                            address: chainConfig.stateManager,
+                            abi: STATE_MANAGER_ABI,
+                            functionName: "batchUpdateChainApy",
+                            args: [chainIds, apys],
+                        });
+                        console.log(`[APY] ${chainConfig.name}: Updated ${chainIds.length} chains. TX: ${hash}`);
+                        result.txHash = hash; // Last TX hash
+                    }
+                    catch (error) {
+                        console.error(`[APY] ${chainConfig.name}: Error updating APY:`, error.message);
+                    }
+                }
+                result.chainsUpdated = chainIds.length;
+            }
+            else if (!this.privateKey) {
+                console.log("[APY] No private key - skipping on-chain update");
+                result.chainsUpdated = chainIds.length;
+            }
+        }
+        catch (error) {
+            result.error = error.message;
+            console.error("[APY] Error updating APY:", result.error);
+        }
+        this.apyResults.push(result);
+        if (this.apyResults.length > 50) {
+            this.apyResults.shift();
+        }
+        return result;
+    }
+    /**
+     * Get best chain for APY from StateManager (queries first chain)
+     */
+    async getBestChainForApy() {
+        try {
+            const chainConfig = CHAIN_CONFIGS[0];
+            const client = this.getClient(chainConfig);
+            const result = await client.readContract({
+                address: chainConfig.stateManager,
+                abi: STATE_MANAGER_ABI,
+                functionName: "getBestChainForApy",
+            });
+            return { chainId: result[0], apy: result[1] };
+        }
+        catch (error) {
+            console.error("[APY] Error getting best chain:", error);
+            return null;
+        }
+    }
+    /**
+     * Check if a payroll can be migrated on a specific chain
+     */
+    async canMigratePayroll(chainConfig, payrollDate) {
+        try {
+            const client = this.getClient(chainConfig);
+            const canMigrate = await client.readContract({
+                address: chainConfig.stateManager,
+                abi: STATE_MANAGER_ABI,
+                functionName: "isMigrationValid",
+                args: [payrollDate],
+            });
+            return canMigrate;
+        }
+        catch (error) {
+            console.error("[REBALANCE] Error checking migration validity:", error);
+            return false;
+        }
+    }
+    /**
+     * Check if a payroll should migrate on a specific chain
+     */
+    async shouldMigrate(chainConfig, payrollId) {
+        const client = this.getClient(chainConfig);
+        const result = await client.readContract({
+            address: chainConfig.migration,
+            abi: MIGRATION_ABI,
+            functionName: "shouldMigrate",
+            args: [payrollId],
+        });
+        return { migrate: result[0], targetChain: result[1], apyDiff: result[2] };
+    }
+    /**
+     * Execute migration out to target chain
+     */
+    async executeMigrateOut(chainConfig, payrollId, targetChainId) {
+        const walletClient = this.getWalletClient(chainConfig);
+        const hash = await walletClient.writeContract({
+            address: chainConfig.migration,
+            abi: MIGRATION_ABI,
+            functionName: "migrateOut",
+            args: [payrollId, targetChainId],
+        });
+        return hash;
+    }
+    /**
+     * Check active payrolls for rebalancing opportunities across all chains
+     * Returns array of opportunities and optionally executes migrations if private key is set
+     */
+    async checkRebalancingOpportunities() {
+        console.log("[REBALANCE] Checking for rebalancing opportunities across all chains...");
+        const opportunities = [];
+        try {
+            // Get best chain for APY
+            const bestChain = await this.getBestChainForApy();
+            if (!bestChain || bestChain.chainId === BigInt(0)) {
+                console.log("[REBALANCE] No valid APY data available");
+                return opportunities;
+            }
+            const bestApyPercent = Number(bestChain.apy) / 100;
+            console.log(`[REBALANCE] Best APY: ${bestApyPercent.toFixed(2)}% on chain ${bestChain.chainId}`);
+            // Check each chain for rebalancing opportunities
+            for (const chainConfig of CHAIN_CONFIGS) {
+                try {
+                    // Skip if migration contract not deployed
+                    if (chainConfig.migration === "0x0000000000000000000000000000000000000000") {
+                        console.log(`[REBALANCE] ${chainConfig.name}: Migration contract not deployed yet`);
+                        continue;
+                    }
+                    const client = this.getClient(chainConfig);
+                    // Get all active payroll IDs from router
+                    const activePayrollIds = await client.readContract({
+                        address: chainConfig.router,
+                        abi: ROUTER_ABI,
+                        functionName: "getActivePayrollIds",
+                    });
+                    if (activePayrollIds.length === 0) {
+                        console.log(`[REBALANCE] ${chainConfig.name}: No active payrolls`);
+                        continue;
+                    }
+                    console.log(`[REBALANCE] ${chainConfig.name}: Checking ${activePayrollIds.length} active payroll(s)...`);
+                    // For each active payroll, check if it should migrate
+                    for (const payrollId of activePayrollIds) {
+                        try {
+                            const result = await this.shouldMigrate(chainConfig, payrollId);
+                            // Always add to opportunities list
+                            opportunities.push({
+                                payrollId,
+                                currentChain: chainConfig.name,
+                                targetChain: result.targetChain,
+                                apyDiff: result.apyDiff,
+                                shouldMigrate: result.migrate,
+                            });
+                            if (result.migrate) {
+                                const apyDiffPercent = Number(result.apyDiff) / 100;
+                                console.log(`[REBALANCE] ${chainConfig.name}: Payroll #${payrollId} should migrate to chain ${result.targetChain} (APY diff: +${apyDiffPercent.toFixed(2)}%)`);
+                                if (this.privateKey) {
+                                    const txHash = await this.executeMigrateOut(chainConfig, payrollId, result.targetChain);
+                                    console.log(`[REBALANCE] ${chainConfig.name}: Migration initiated! TX: ${txHash}`);
+                                    this.rebalanceResults.push({
+                                        timestamp: new Date(),
+                                        payrollId,
+                                        fromChain: chainConfig.id,
+                                        toChain: Number(result.targetChain),
+                                        amount: BigInt(0), // Amount is returned in TX receipt
+                                        apyDiff: apyDiffPercent,
+                                        txHash,
+                                    });
+                                }
+                            }
+                        }
+                        catch (error) {
+                            // Position can't migrate or other error, skip
+                            continue;
+                        }
+                    }
+                }
+                catch (error) {
+                    console.error(`[REBALANCE] ${chainConfig.name}: Error:`, error.message);
+                }
+            }
+            console.log("[REBALANCE] Check complete");
+        }
+        catch (error) {
+            console.error("[REBALANCE] Error:", error);
+        }
+        return opportunities;
+    }
+    /**
+     * APY monitoring tick - runs every 6 hours
+     */
+    async apyTick() {
+        const result = await this.updateApyRates();
+        // Check rebalancing opportunities after APY update
+        if (result.chainsUpdated > 0) {
+            await this.checkRebalancingOpportunities();
+        }
+        return result;
+    }
+    /**
      * Start the cron (runs every minute by default)
      */
-    start(intervalMs = 60000) {
+    async start(intervalMs = 60000) {
         if (this.intervalId) {
             console.log("[CRON] Already running");
             return;
         }
-        console.log(`[CRON] Starting payroll cron (interval: ${intervalMs}ms)`);
-        console.log(`[CRON] Router: ${ROUTER_ADDRESS}`);
+        console.log(`[CRON] Starting multi-chain payroll cron (interval: ${intervalMs}ms)`);
+        console.log(`[CRON] Monitoring ${CHAIN_CONFIGS.length} chains:`);
+        for (const chain of CHAIN_CONFIGS) {
+            console.log(`[CRON]   - ${chain.name}: Router ${chain.router}`);
+        }
         console.log(`[CRON] Auto-execute: ${this.privateKey ? "enabled" : "disabled (no private key)"}`);
+        // Initialize Yellow Network SDK if private key is available
+        if (this.privateKey && this.useYellowChannels) {
+            await this.initializeYellowSDK();
+        }
+        console.log(`[CRON] Yellow Network channels: ${this.isYellowReady() ? "enabled" : "disabled"}`);
         // Run immediately
         this.tick();
         // Then run on interval
         this.intervalId = setInterval(() => this.tick(), intervalMs);
+        // Start APY monitoring (every 6 hours = 21600000ms)
+        const APY_INTERVAL = 6 * 60 * 60 * 1000;
+        console.log(`[APY] Starting APY monitoring (interval: ${APY_INTERVAL / 1000 / 60} minutes)`);
+        // Run APY update immediately
+        this.apyTick();
+        // Then run on 6-hour interval
+        this.apyIntervalId = setInterval(() => this.apyTick(), APY_INTERVAL);
     }
     /**
      * Stop the cron
@@ -128,31 +464,60 @@ export class PayrollCron {
         if (this.intervalId) {
             clearInterval(this.intervalId);
             this.intervalId = null;
-            console.log("[CRON] Stopped");
+            console.log("[CRON] Payroll cron stopped");
+        }
+        if (this.apyIntervalId) {
+            clearInterval(this.apyIntervalId);
+            this.apyIntervalId = null;
+            console.log("[CRON] APY monitoring stopped");
         }
     }
     /**
-     * Get recent results
+     * Get recent payroll results
      */
     getResults() {
         return this.results;
     }
     /**
-     * Get last result
+     * Get last payroll result
      */
     getLastResult() {
         return this.results[this.results.length - 1] || null;
+    }
+    /**
+     * Get recent APY update results
+     */
+    getApyResults() {
+        return this.apyResults;
+    }
+    /**
+     * Get last APY update result
+     */
+    getLastApyResult() {
+        return this.apyResults[this.apyResults.length - 1] || null;
+    }
+    /**
+     * Get rebalance results
+     */
+    getRebalanceResults() {
+        return this.rebalanceResults;
+    }
+    /**
+     * Force APY update (for testing)
+     */
+    async forceApyUpdate() {
+        return this.apyTick();
     }
 }
 /**
  * Start standalone cron (for running as separate process)
  */
-export function startStandaloneCron() {
-    const rpcUrl = process.env.RPC_URL;
+export async function startStandaloneCron() {
     const privateKey = process.env.AGENT_PRIVATE_KEY;
+    const alchemyApiKey = process.env.ALCHEMY_API_KEY;
     const interval = parseInt(process.env.CRON_INTERVAL || "60000");
-    const cron = new PayrollCron(rpcUrl, privateKey);
-    cron.start(interval);
+    const cron = new PayrollCron(privateKey, alchemyApiKey);
+    await cron.start(interval);
     // Graceful shutdown
     process.on("SIGINT", () => {
         console.log("\n[CRON] Shutting down...");

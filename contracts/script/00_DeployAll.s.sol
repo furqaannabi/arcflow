@@ -111,6 +111,7 @@ contract DeployAllScript is Script {
 
         // 6. Configure router and migration
         router.setAgent(agentAddress);
+        router.setAgent(0x7D4e2d9D7cf03199D5E41bAB5E9930a8d9A44FD7);
         router.setMigrationContract(address(migration));
         migration.setAgent(agentAddress);
         if (config.gatewayMinter != address(0)) {
