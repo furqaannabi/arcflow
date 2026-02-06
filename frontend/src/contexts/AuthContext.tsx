@@ -230,7 +230,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       // For Smart Accounts, we must use UserOperations (ERC-4337)
-      // We extend the client with bundler actions
+      // We extend the client with bundler actions.
+      // Note: "paymaster: true" requests gas sponsorship from the Circle Paymaster.
       const bundlerClient = publicClient.extend(bundlerActions);
 
       console.log("Sending UserOperation...");
@@ -241,6 +242,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           data: tx.data as `0x${string}`,
           value: tx.value || 0n,
         }],
+        paymaster: true,
       });
 
       console.log('UserOp sent, hash:', userOpHash);
