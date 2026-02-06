@@ -600,7 +600,7 @@ function toOpenAIMessages(messages: IMessage[]): OpenAI.Chat.ChatCompletionMessa
         content: m.content || "",
       };
     }
-    if (m.role === "assistant" && m.tool_calls) {
+    if (m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0) {
       return {
         role: "assistant" as const,
         content: m.content,
