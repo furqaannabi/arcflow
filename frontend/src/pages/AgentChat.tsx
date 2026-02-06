@@ -25,6 +25,7 @@ export default function AgentChat() {
   const [isLoading, setIsLoading] = useState(false);
   const [sessionId] = useState(() => "session-" + Math.random().toString(36).substring(7));
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -33,6 +34,10 @@ export default function AgentChat() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
 
   const handleSendMessage = async () => {
     if ((!input.trim() && selectedFiles.length === 0) || isLoading) return;
@@ -110,14 +115,35 @@ export default function AgentChat() {
 
     } catch (error) {
       console.error("Chat error:", error);
-      setMessages((prev) => [...prev, { role: "system", content: `Error: ${(error as Error).message || "Failed to communicate with agent."}` }]);
+      let errorMessage = (error as Error).message || "Failed to communicate with agent.";
+      
+      if (errorMessage.includes("File upload not allowed")) {
+        errorMessage = "Please ask the agent first before uploading (e.g., 'I want to upload payroll').";
+      }
+      
+      setMessages((prev) => [...prev, { role: "system", content: `Error: ${errorMessage}` }]);
     } finally {
       setIsLoading(false);
+      setTimeout(() => inputRef.current?.focus(), 100);
     }
   };
 
   const removeFile = (index: number) => {
     setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+    // Auto-resize
+    e.target.style.height = "auto";
+    e.target.style.height = Math.min(e.target.scrollHeight, 200) + "px"; // Max height 200px
   };
 
   return (
@@ -191,28 +217,34 @@ export default function AgentChat() {
               </div>
             )}
             
-            <div className="flex gap-4">
-              <CSVUpload 
-                onFilesSelect={(files) => setSelectedFiles(prev => [...prev, ...files])} 
-                disabled={isLoading} 
-              />
+            <div className="flex gap-4 items-end">
+              <div className="h-[52px] flex items-center">
+                 <CSVUpload 
+                   onFilesSelect={(files) => setSelectedFiles(prev => [...prev, ...files])} 
+                   disabled={isLoading} 
+                 />
+              </div>
               
               <form 
-                className="flex-1 flex gap-3"
+                className="flex-1 flex gap-3 items-end"
                 onSubmit={(e) => {
                   e.preventDefault();
                   handleSendMessage();
                 }}
               >
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder={selectedFiles.length > 0 ? "Add a message with your files..." : "Ask about payroll, yields, or generate a transaction..."}
-                  className="flex-1 px-6 py-4 text-base border border-gray-200 dark:border-input rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm bg-transparent dark:text-foreground placeholder:text-muted-foreground"
-                  disabled={isLoading}
-                />
-                <Button type="submit" disabled={isLoading || (!input.trim() && selectedFiles.length === 0)} className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700 text-white h-full w-14 rounded-xl">
+                <div className="flex-1 relative">
+                  <textarea
+                    ref={inputRef}
+                    rows={1}
+                    value={input}
+                    onChange={handleInput}
+                    onKeyDown={handleKeyDown}
+                    placeholder={selectedFiles.length > 0 ? "Add a message with your files..." : "Ask about payroll, yields, or generate a transaction..."}
+                    className="w-full px-6 py-4 text-base border border-gray-200 dark:border-input rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm bg-transparent dark:text-foreground placeholder:text-muted-foreground resize-none min-h-[52px] max-h-[200px] overflow-y-auto"
+                    disabled={isLoading}
+                  />
+                </div>
+                <Button type="submit" disabled={isLoading || (!input.trim() && selectedFiles.length === 0)} className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700 text-white h-[52px] w-14 rounded-xl flex-shrink-0">
                   <Send className="w-5 h-5" />
                 </Button>
               </form>
