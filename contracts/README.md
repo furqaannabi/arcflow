@@ -20,18 +20,12 @@ All payroll executions and migrations **require** Yellow Network state channel v
 
 | Contract | Function | Description |
 |----------|----------|-------------|
-| `ArcFlowRouter` | `settleFromChannel()` | Execute payroll via verified channel state |
+| `ArcFlowRouter` | `settle()` | Execute payroll via verified channel state |
 | `ArcFlowMigration` | `migrateOutViaChannel()` | Migrate with channel signature |
 | `ArcFlowMigration` | `migrateInViaChannel()` | Receive migration with channel verification |
 | `ArcPayrollDistributor` | `distributeFromChannel()` | Distribute with channel verification |
 | `ArcFlowStateManager` | `verifyChannelState()` | Verify Yellow Network channel signatures |
 | `ArcFlowStateManager` | `recordChannelSettlement()` | Record channel settlement on-chain |
-
-### Disabled Functions
-
-The following direct execution methods are disabled and will revert:
-- `ArcFlowRouter.withdraw()` - Returns `"YELLOW_CHANNEL_REQUIRED"`
-- `ArcFlowRouter.executeReadyPayrolls()` - Returns `"YELLOW_CHANNEL_REQUIRED"`
 
 ## Supported Chains
 
@@ -94,11 +88,41 @@ This merges all deployment files into `../agent/src/addresses.json`.
 
 ```bash
 # Deploy to Base Sepolia
-forge script script/00_DeployAll.s.sol --rpc-url baseSepolia --broadcast --verify
+forge script script/00_DeployAll.s.sol:DeployAllScript --rpc-url baseSepolia --broadcast --verify --verifier etherscan -vvvv
 
-# Deploy Distributor to Arc
-forge script script/01_DeployDistributor.s.sol --rpc-url arc --broadcast
+# Deploy to Sepolia
+forge script script/00_DeployAll.s.sol:DeployAllScript --rpc-url sepolia --broadcast --verify --verifier etherscan -vvvv
+
+# Deploy Distributor to Arc Testnet
+forge script script/01_DeployDistributor.s.sol:DeployDistributorScript --rpc-url arc --broadcast --verify --verifier blockscout --verifier-url https://testnet.arcscan.app/api -vvvv
+
+# Merge all deployments
+./deploy.sh merge
 ```
+
+## Deployed Addresses
+
+### Base Sepolia (84532)
+
+| Contract | Address |
+|----------|---------|
+| Router | `0x5a17ADC65211839f9ba2aE818902758F7C7F8Aa7` |
+| StateManager | `0xf9973fb417EC0c6479ce48428c609d8ec9e5faA3` |
+| Migration | `0x89f905bE3C7852971965353A8D0E565207A7AA3f` |
+
+### Sepolia (11155111)
+
+| Contract | Address |
+|----------|---------|
+| Router | `0x3d3131bA11363596423A6c77B21EB1F174752547` |
+| StateManager | `0xc563847a746b8bd1B19d62e2b7377b4e9AA4D574` |
+| Migration | `0x6bee4505Ff82f6647932F93a157eA0E67b565D00` |
+
+### Arc Testnet (5042002)
+
+| Contract | Address |
+|----------|---------|
+| Distributor | `0x559B75C59DB2ec1753f02F4a6BD50303DA76cfe8` |
 
 ## Deployment Output
 
@@ -124,7 +148,7 @@ Source Chains (Base/Sepolia)              Arc Testnet
 ┌─────────────────────────────┐          ┌──────────────────────────┐
 │  ArcFlowRouter              │          │  ArcPayrollDistributor   │
 │  - deposit()                │          │  - distributeFromChannel()│
-│  - settleFromChannel()      │  ─────►  │  - verifyChannelState()  │
+│  - settle()                 │  ─────►  │  - verifyChannelState()  │
 │                             │          │                          │
 │  ArcFlowMigration           │          │                          │
 │  - migrateOutViaChannel()   │          │                          │
@@ -144,7 +168,7 @@ Source Chains (Base/Sepolia)              Arc Testnet
 
 1. **Deposit**: User deposits USDC via `deposit()` - creates LP position
 2. **Channel Creation**: Agent creates Yellow Network state channel
-3. **Settlement**: Agent calls `settleFromChannel()` with channel signature
+3. **Settlement**: Agent calls `settle()` with channel signature
 4. **Verification**: StateManager verifies channel state via `verifyChannelState()`
 5. **Withdrawal**: Liquidity removed, yield calculated
 6. **Bridge**: USDC bridged to Arc via Circle Gateway
