@@ -364,7 +364,7 @@ export default function AgentChat() {
               </div>
             )}
             
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 md:gap-3">
               <CSVUpload 
                 onFilesSelect={(files) => setSelectedFiles(prev => [...prev, ...files])} 
                 disabled={isLoading} 
@@ -377,8 +377,8 @@ export default function AgentChat() {
                   value={input}
                   onChange={handleInput}
                   onKeyDown={handleKeyDown}
-                  placeholder={selectedFiles.length > 0 ? "Add a message with your files..." : "Ask about payroll, yields, or generate a transaction..."}
-                  className="w-full px-6 py-4 text-base border border-gray-200 dark:border-input rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm bg-transparent dark:text-foreground placeholder:text-muted-foreground resize-none min-h-[52px] max-h-[200px] overflow-y-auto"
+                  placeholder={selectedFiles.length > 0 ? "Add a message..." : "Ask anything..."}
+                  className="w-full px-3 md:px-6 py-3 md:py-4 text-sm md:text-base border border-gray-200 dark:border-input rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm bg-transparent dark:text-foreground placeholder:text-muted-foreground resize-none min-h-[44px] md:min-h-[52px] max-h-[200px] overflow-y-auto"
                   disabled={isLoading}
                 />
               </div>
@@ -386,7 +386,7 @@ export default function AgentChat() {
               <Button 
                 onClick={() => handleSendMessage()}
                 disabled={isLoading || (!input.trim() && selectedFiles.length === 0)} 
-                className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700 text-white h-[52px] w-14 rounded-xl flex-shrink-0"
+                className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700 text-white h-[44px] md:h-[52px] w-11 md:w-14 rounded-xl flex-shrink-0"
               >
                 <Send className="w-5 h-5" />
               </Button>
