@@ -11,7 +11,11 @@ interface ChatSession {
   timestamp: Date;
 }
 
-export default function Sidebar() {
+interface SidebarProps {
+  onNewChat?: () => void;
+}
+
+export default function Sidebar({ onNewChat }: SidebarProps) {
   const { theme, setTheme } = useTheme();
   const [sessions, setSessions] = useState<ChatSession[]>([
     {
@@ -38,6 +42,7 @@ export default function Sidebar() {
     };
     setSessions([newSession, ...sessions]);
     setActiveSessionId(newSession.id);
+    if (onNewChat) onNewChat();
   };
 
   const handleDeleteSession = (id: string, e: React.MouseEvent) => {

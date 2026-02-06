@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Bot, FileText, X } from "lucide-react";
+import { Send, Bot, FileText, X, Sparkles, TrendingUp, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import ChatMessage from "@/components/chat/ChatMessage";
@@ -11,15 +11,68 @@ import ConnectButton from "@/components/ConnectButton";
 interface Message {
   role: "user" | "assistant" | "system";
   content: string;
+  timestamp: Date;
 }
 
 const AGENT_API_URL = "http://localhost:3001";
 
+function WelcomeScreen({ onSuggestionClick }: { onSuggestionClick: (text: string) => void }) {
+  const suggestions = [
+    {
+      icon: TrendingUp,
+      text: "Check yields on Base",
+      prompt: "What are the current yields for USDC on Base?",
+      color: "text-green-500 bg-green-50 dark:bg-green-900/20 dark:text-green-400"
+    },
+    {
+      icon: Users,
+      text: "Draft a new payroll",
+      prompt: "I want to draft a new payroll for my team.",
+      color: "text-blue-500 bg-blue-50 dark:bg-blue-900/20 dark:text-blue-400"
+    },
+    {
+      icon: FileText,
+      text: "Upload employee CSV",
+      prompt: "I have an employee CSV file to upload.",
+      color: "text-purple-500 bg-purple-50 dark:bg-purple-900/20 dark:text-purple-400"
+    }
+  ];
+
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center animate-in fade-in zoom-in-95 duration-500">
+      <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-blue-500/20">
+        <Sparkles className="w-8 h-8 text-white" />
+      </div>
+      <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
+        Welcome to ArcFlow Agent
+      </h2>
+      <p className="text-gray-500 dark:text-gray-400 max-w-md mb-8">
+        I can help you manage payrolls, optimize yields, and execute cross-chain transactions seamlessly.
+      </p>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-2xl">
+        {suggestions.map((s, i) => (
+          <button
+            key={i}
+            onClick={() => onSuggestionClick(s.prompt)}
+            className="flex flex-col items-center p-4 bg-white dark:bg-card border border-gray-100 dark:border-border rounded-xl hover:border-blue-200 dark:hover:border-blue-800 hover:shadow-md transition-all group text-left"
+          >
+            <div className={`p-3 rounded-lg mb-3 ${s.color} group-hover:scale-110 transition-transform`}>
+              <s.icon className="w-5 h-5" />
+            </div>
+            <span className="font-medium text-sm text-gray-700 dark:text-gray-300">
+              {s.text}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function AgentChat() {
   const { userAddress } = useAuth();
-  const [messages, setMessages] = useState<Message[]>([
-    // { role: "assistant", content: "Hello! I'm ArcFlow Agent. I can help you manage your payrolls. You can ask me to set a payroll date, calculate yields, or upload an employee CSV." }
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -34,7 +87,7 @@ export default function AgentChat() {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, isLoading]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -56,7 +109,11 @@ export default function AgentChat() {
     setIsLoading(true);
 
     // Optimistically add user message
-    const userMsg: Message = { role: "user", content: currentInput || (currentFiles.length > 0 ? `Uploaded ${currentFiles.length} file(s)` : "") };
+    const userMsg: Message = { 
+        role: "user", 
+        content: currentInput || (currentFiles.length > 0 ? `Uploaded ${currentFiles.length} file(s)` : ""),
+        timestamp: new Date()
+    };
     setMessages((prev) => [...prev, userMsg]);
 
     try {
@@ -111,11 +168,11 @@ export default function AgentChat() {
           
           // Add system message for upload progress
           if (currentFiles.length > 1) {
-             setMessages((prev) => [...prev, { role: "system", content: `Uploading ${file.name}...` }]);
+             setMessages((prev) => [...prev, { role: "system", content: `Uploading ${file.name}...`, timestamp: new Date() }]);
           }
 
           const data = await sendRequest(file, msgToSend);
-          setMessages((prev) => [...prev, { role: "assistant", content: data.response }]);
+          setMessages((prev) => [...prev, { role: "assistant", content: data.response, timestamp: new Date() }]);
         }
       } else {
         // Text only
@@ -135,7 +192,7 @@ export default function AgentChat() {
           }, null, 2)}\n\`\`\``;
         }
 
-        setMessages((prev) => [...prev, { role: "assistant", content }]);
+        setMessages((prev) => [...prev, { role: "assistant", content, timestamp: new Date() }]);
       }
 
     } catch (error) {
@@ -146,7 +203,7 @@ export default function AgentChat() {
         errorMessage = "Please ask the agent first before uploading (e.g., 'I want to upload payroll').";
       }
       
-      setMessages((prev) => [...prev, { role: "system", content: `Error: ${errorMessage}` }]);
+      setMessages((prev) => [...prev, { role: "system", content: `Error: ${errorMessage}`, timestamp: new Date() }]);
     } finally {
       setIsLoading(false);
       setTimeout(() => inputRef.current?.focus(), 100);
@@ -171,9 +228,17 @@ export default function AgentChat() {
     e.target.style.height = Math.min(e.target.scrollHeight, 200) + "px"; // Max height 200px
   };
 
+  const handleNewChat = () => {
+    setMessages([]);
+    setSessionId(null);
+    setInput("");
+    setSelectedFiles([]);
+    inputRef.current?.focus();
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-background flex transition-colors duration-300">
-      <Sidebar />
+      <Sidebar onNewChat={handleNewChat} />
 
       <div className="flex-1 flex flex-col h-screen">
         {/* Header */}
@@ -191,32 +256,37 @@ export default function AgentChat() {
         </header>
 
         {/* Chat Area */}
-        <main className="flex-1 overflow-y-auto p-4 md:p-8 space-y-4">
-          <div className="max-w-5xl mx-auto w-full flex flex-col">
-            {messages.map((msg, idx) => (
-              <ChatMessage 
-                key={idx} 
-                role={msg.role} 
-                content={msg.content} 
-                onTransactionSuccess={(txHash) => handleSendMessage(`Transaction approved! Hash: ${txHash}`)}
-              />
-            ))}
-            {isLoading && (
-              <div className="flex justify-start mb-4">
-                 <div className="bg-gray-100 dark:bg-muted rounded-2xl rounded-tl-sm px-4 py-3 border border-gray-200 dark:border-border flex items-center gap-2 transition-colors duration-300">
-                    <div className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                    <div className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                    <div className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-                 </div>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
+        <main className="flex-1 overflow-y-auto p-4 md:p-8 flex flex-col">
+          {messages.length === 0 ? (
+            <WelcomeScreen onSuggestionClick={handleSendMessage} />
+          ) : (
+            <div className="max-w-4xl mx-auto w-full flex flex-col">
+              {messages.map((msg, idx) => (
+                <ChatMessage 
+                  key={idx} 
+                  role={msg.role} 
+                  content={msg.content} 
+                  timestamp={msg.timestamp}
+                  onTransactionSuccess={(txHash) => handleSendMessage(`Transaction approved! Hash: ${txHash}`)}
+                />
+              ))}
+              {isLoading && (
+                <div className="flex justify-start mb-6 ml-11 animate-in fade-in slide-in-from-bottom-2">
+                   <div className="bg-gray-100 dark:bg-muted rounded-2xl rounded-tl-sm px-4 py-3 border border-gray-200 dark:border-border flex items-center gap-1.5 transition-colors duration-300">
+                      <div className="w-1.5 h-1.5 bg-gray-400 dark:bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                      <div className="w-1.5 h-1.5 bg-gray-400 dark:bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                      <div className="w-1.5 h-1.5 bg-gray-400 dark:bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                   </div>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+          )}
         </main>
 
         {/* Input Area */}
         <div className="bg-white dark:bg-card border-t border-gray-100 dark:border-border p-6 shrink-0 transition-colors duration-300">
-          <div className="max-w-5xl mx-auto w-full flex flex-col gap-3">
+          <div className="max-w-4xl mx-auto w-full flex flex-col gap-3">
             {selectedFiles.length > 0 && (
               <div className="flex flex-wrap gap-2 animate-in fade-in slide-in-from-bottom-2">
                 {selectedFiles.map((file, index) => (
