@@ -673,6 +673,15 @@ router.post("/chat", upload.single("file"), async (req: Request, res: Response) 
     let messages = toOpenAIMessages(session.messages);
     let pendingPayroll: IPendingPayroll = session.pendingPayroll || {};
 
+    // Track transaction data from tool calls
+    const transactions: Array<{ type: string; to: string; data: string; description: string; [key: string]: any }> = [];
+    const TX_TOOLS = new Set([
+      "get_approval_transaction",
+      "get_deposit_transaction",
+      "get_withdrawal_transaction",
+      "get_execute_payrolls_transaction",
+    ]);
+
     // Call OpenAI with tools
     let response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -706,6 +715,16 @@ router.post("/chat", upload.single("file"), async (req: Request, res: Response) 
           pendingPayroll
         );
         pendingPayroll = updatedPayroll;
+
+        // Capture transaction data for the response
+        if (TX_TOOLS.has(toolCall.function.name)) {
+          try {
+            const parsed = JSON.parse(result);
+            if (parsed.to && parsed.data) {
+              transactions.push({ type: toolCall.function.name, ...parsed });
+            }
+          } catch {}
+        }
 
         session.messages.push({
           role: "tool",
@@ -754,6 +773,7 @@ router.post("/chat", upload.single("file"), async (req: Request, res: Response) 
       response: assistantMessage.content,
       sessionId,
       allowFileUpload,
+      transactions: transactions.length > 0 ? transactions : undefined,
       state: pendingPayroll
         ? {
             hasPayrollDate: !!pendingPayroll.payrollDate,
