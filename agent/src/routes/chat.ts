@@ -27,7 +27,7 @@ const upload = multer({
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
-  baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+  // baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
 });
 
 const contractService = new ContractService(process.env.RPC_URL);
@@ -660,7 +660,7 @@ router.post("/chat", upload.single("file"), async (req: Request, res: Response) 
 
     // Call OpenAI with tools
     let response = await openai.chat.completions.create({
-      model: "gemini-2.5-flash",
+      model: "gpt-4o-mini",
       messages,
       tools,
       tool_choice: "auto",
