@@ -53,30 +53,54 @@ export default function Sidebar({ onNewChat, onSessionChange, activeSessionId: e
   }, [sessions]);
 
   // Ensure externalActiveSessionId has a session entry (only if messages exist)
+  // Also update title if it's a generic placeholder
   useEffect(() => {
-    if (externalActiveSessionId && !sessions.find(s => s.id === externalActiveSessionId)) {
-      // Only auto-create if there are messages stored for this session
-      const messagesJson = localStorage.getItem(`arcflow_messages_${externalActiveSessionId}`);
-      if (messagesJson) {
-        try {
-          const messages = JSON.parse(messagesJson);
-          // Get first user message for title
-          const firstUserMsg = messages.find((m: any) => m.role === 'user');
-          const title = firstUserMsg?.content?.slice(0, 30) || "Chat";
-          
-          const newSession: ChatSession = {
-            id: externalActiveSessionId,
-            title: title + (title.length >= 30 ? "..." : ""),
-            lastMessage: messages[messages.length - 1]?.content?.slice(0, 50) || "",
-            timestamp: new Date(),
-          };
-          setSessions(prev => [newSession, ...prev]);
-        } catch (e) {
-          console.error('Failed to parse messages for session creation', e);
+    if (!externalActiveSessionId) return;
+    
+    const messagesJson = localStorage.getItem(`arcflow_messages_${externalActiveSessionId}`);
+    if (!messagesJson) return;
+    
+    try {
+      const messages = JSON.parse(messagesJson);
+      const firstUserMsg = messages.find((m: any) => m.role === 'user');
+      const titleFromMessage = firstUserMsg?.content?.slice(0, 30) || "Chat";
+      const finalTitle = titleFromMessage + (titleFromMessage.length >= 30 ? "..." : "");
+      
+      // Check if session already exists
+      const existingSession = sessions.find(s => s.id === externalActiveSessionId);
+      
+      if (existingSession) {
+        // Update title if it's a generic placeholder
+        if (existingSession.title === "Chat" || existingSession.title === "New Chat") {
+          setSessions(prev => prev.map(s => 
+            s.id === externalActiveSessionId ? { ...s, title: finalTitle } : s
+          ));
         }
+        return;
       }
+      
+      // Check localStorage to avoid race condition
+      const storedSessions = localStorage.getItem('arcflow_sessions');
+      if (storedSessions) {
+        const parsed = JSON.parse(storedSessions);
+        if (parsed.some((s: any) => s.id === externalActiveSessionId)) return;
+      }
+      
+      // Create new session
+      const newSession: ChatSession = {
+        id: externalActiveSessionId,
+        title: finalTitle,
+        lastMessage: messages[messages.length - 1]?.content?.slice(0, 50) || "",
+        timestamp: new Date(),
+      };
+      setSessions(prev => {
+        if (prev.some(s => s.id === externalActiveSessionId)) return prev;
+        return [newSession, ...prev];
+      });
+    } catch (e) {
+      console.error('Failed to process session', e);
     }
-  }, [externalActiveSessionId, sessions, messagesVersion]);
+  }, [externalActiveSessionId, messagesVersion]);
 
   const handleNewChat = () => {
     const newSession: ChatSession = {
@@ -158,9 +182,11 @@ export default function Sidebar({ onNewChat, onSessionChange, activeSessionId: e
       {/* New Chat Button */}
       <button
         onClick={handleNewChat}
-        className="flex items-center justify-center gap-2 w-full px-4 py-2.5 mb-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
+        className="group flex items-center justify-center gap-2 w-full px-4 py-2.5 mb-4 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 hover:border-blue-500 dark:hover:border-blue-400 text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 font-medium transition-all duration-200 hover:bg-blue-50 dark:hover:bg-blue-900/10"
       >
-        <Plus className="w-4 h-4" />
+        <div className="p-1 rounded-lg bg-gray-100 dark:bg-gray-800 group-hover:bg-blue-100 dark:group-hover:bg-blue-900/30 transition-colors">
+          <Plus className="w-4 h-4" />
+        </div>
         New Chat
       </button>
 
