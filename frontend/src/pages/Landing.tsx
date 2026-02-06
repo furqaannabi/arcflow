@@ -58,9 +58,9 @@ export default function Landing() {
                 <Button 
                   size="lg" 
                   className="h-12 px-8 bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700 text-white rounded-full shadow-lg shadow-blue-600/25 text-base transition-transform hover:scale-105 active:scale-95"
-                  onClick={() => isConnected ? navigate('/dashboard') : connect()}
+                  onClick={() => isConnected ? navigate('/chat') : connect()}
                 >
-                  {isConnected ? "Go to Dashboard" : "Get Started"}
+                  {isConnected ? "Go to Chat" : "Get Started"}
                 </Button>
                 <Button size="lg" variant="ghost" className="h-12 px-6 text-gray-600 dark:text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-full gap-2 group">
                   <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center group-hover:bg-blue-200 dark:group-hover:bg-blue-900 transition-colors">
@@ -262,9 +262,9 @@ export default function Landing() {
                )}
                <Button 
                 className="h-14 px-8 rounded-full bg-orange-500 hover:bg-orange-600 text-white font-bold shadow-lg shadow-orange-500/20 w-full sm:w-auto"
-                onClick={() => isConnected ? navigate('/dashboard') : connect()}
+                onClick={() => isConnected ? navigate('/chat') : connect()}
                >
-                  {isConnected ? "Go to Dashboard" : "Get Started"}
+                  {isConnected ? "Go to Chat" : "Get Started"}
                </Button>
             </div>
             <p className="text-sm text-gray-500 dark:text-muted-foreground mt-6">No credit card required. Cancel anytime.</p>

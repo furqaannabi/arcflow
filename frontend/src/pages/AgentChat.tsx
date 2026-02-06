@@ -237,37 +237,32 @@ export default function AgentChat() {
               </div>
             )}
             
-            <div className="flex gap-4 items-end">
-              <div className="h-[52px] flex items-center">
-                 <CSVUpload 
-                   onFilesSelect={(files) => setSelectedFiles(prev => [...prev, ...files])} 
-                   disabled={isLoading} 
-                 />
+            <div className="flex items-center gap-3">
+              <CSVUpload 
+                onFilesSelect={(files) => setSelectedFiles(prev => [...prev, ...files])} 
+                disabled={isLoading} 
+              />
+              
+              <div className="flex-1 relative">
+                <textarea
+                  ref={inputRef}
+                  rows={1}
+                  value={input}
+                  onChange={handleInput}
+                  onKeyDown={handleKeyDown}
+                  placeholder={selectedFiles.length > 0 ? "Add a message with your files..." : "Ask about payroll, yields, or generate a transaction..."}
+                  className="w-full px-6 py-4 text-base border border-gray-200 dark:border-input rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm bg-transparent dark:text-foreground placeholder:text-muted-foreground resize-none min-h-[52px] max-h-[200px] overflow-y-auto"
+                  disabled={isLoading}
+                />
               </div>
               
-              <form 
-                className="flex-1 flex gap-3 items-end"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  handleSendMessage();
-                }}
+              <Button 
+                onClick={() => handleSendMessage()}
+                disabled={isLoading || (!input.trim() && selectedFiles.length === 0)} 
+                className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700 text-white h-[52px] w-14 rounded-xl flex-shrink-0"
               >
-                <div className="flex-1 relative">
-                  <textarea
-                    ref={inputRef}
-                    rows={1}
-                    value={input}
-                    onChange={handleInput}
-                    onKeyDown={handleKeyDown}
-                    placeholder={selectedFiles.length > 0 ? "Add a message with your files..." : "Ask about payroll, yields, or generate a transaction..."}
-                    className="w-full px-6 py-4 text-base border border-gray-200 dark:border-input rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm bg-transparent dark:text-foreground placeholder:text-muted-foreground resize-none min-h-[52px] max-h-[200px] overflow-y-auto"
-                    disabled={isLoading}
-                  />
-                </div>
-                <Button type="submit" disabled={isLoading || (!input.trim() && selectedFiles.length === 0)} className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700 text-white h-[52px] w-14 rounded-xl flex-shrink-0">
-                  <Send className="w-5 h-5" />
-                </Button>
-              </form>
+                <Send className="w-5 h-5" />
+              </Button>
             </div>
           </div>
         </div>
