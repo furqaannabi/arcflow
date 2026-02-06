@@ -40,14 +40,14 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "set_payroll_date",
-      description: "Set the payroll distribution date",
+      description: "Set the payroll distribution date and time. Must be a future date/time. Call get_current_time first to validate.",
       parameters: {
         type: "object",
         properties: {
           date: {
             type: "string",
             description:
-              "The payroll date in ISO format or natural language like '31st January 2025'",
+              "The payroll date and time in ISO format (e.g., '2025-06-15T14:30:00Z') or natural language like '31st January 2025 at 3:00 PM UTC'",
           },
         },
         required: ["date"],
@@ -59,17 +59,35 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "parse_csv_recipients",
       description:
-        "Parse a CSV string containing employee wallet addresses and payment amounts",
+        "Set employee wallet addresses and payment amounts. Use 'recipients' array when parsing from a user's plain text message (you extract the addresses and amounts). Use 'csvData' only when the user uploads or pastes a proper CSV file with headers.",
       parameters: {
         type: "object",
         properties: {
           csvData: {
             type: "string",
             description:
-              "CSV data with columns: address,amount (amount in USDC)",
+              "CSV data with header row and columns: address,amount (only use for actual CSV file uploads)",
+          },
+          recipients: {
+            type: "array",
+            description:
+              "Array of recipients extracted by you (the AI) from the user's message. Use this for plain text input.",
+            items: {
+              type: "object",
+              properties: {
+                address: {
+                  type: "string",
+                  description: "Wallet address (0x...)",
+                },
+                amount: {
+                  type: "string",
+                  description: "USDC amount as a string (e.g., '100')",
+                },
+              },
+              required: ["address", "amount"],
+            },
           },
         },
-        required: ["csvData"],
       },
     },
   },
@@ -96,7 +114,7 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "calculate_expected_return",
       description:
-        "Calculate expected return based on deposit amount and time until payroll",
+        "Calculate expected return based on deposit amount. Yield is calculated from now (deposit time) until the payroll date. Payroll date must be set first using set_payroll_date.",
       parameters: {
         type: "object",
         properties: {
@@ -104,12 +122,8 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
             type: "number",
             description: "USDC amount to deposit",
           },
-          daysUntilPayroll: {
-            type: "number",
-            description: "Number of days until payroll distribution",
-          },
         },
-        required: ["amount", "daysUntilPayroll"],
+        required: ["amount"],
       },
     },
   },
@@ -219,6 +233,18 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "get_current_time",
+      description: "Get the current date and time in UTC. Use this before setting payroll dates to validate the user is not setting a past date/time.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "get_ready_payrolls",
       description: "Get all payrolls that are ready to execute (payroll date has passed)",
       parameters: {
@@ -262,12 +288,18 @@ async function executeTool(
   switch (name) {
     case "set_payroll_date": {
       const dateStr = args.date as string;
-      const parsedDate = new Date(dateStr);
+      const now = new Date();
+      let parsedDate = new Date(dateStr);
+
       if (isNaN(parsedDate.getTime())) {
-        const now = new Date();
+        // Try natural language parsing: "31st January 2025 at 3:00 PM"
         const monthMatch = dateStr.match(
-          /(\d{1,2})(?:st|nd|rd|th)?\s*(january|february|march|april|may|june|july|august|september|october|november|december)/i
+          /(\d{1,2})(?:st|nd|rd|th)?\s*(january|february|march|april|may|june|july|august|september|october|november|december)\s*(\d{4})?/i
         );
+        const timeMatch = dateStr.match(
+          /(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?\s*(utc|gmt)?/i
+        );
+
         if (monthMatch) {
           const day = parseInt(monthMatch[1]);
           const monthNames = [
@@ -275,28 +307,48 @@ async function executeTool(
             "july", "august", "september", "october", "november", "december",
           ];
           const month = monthNames.indexOf(monthMatch[2].toLowerCase());
-          let year = now.getFullYear();
-          const potentialDate = new Date(year, month, day);
-          if (potentialDate < now) {
-            year++;
+          const year = monthMatch[3] ? parseInt(monthMatch[3]) : now.getFullYear();
+
+          let hours = 0, minutes = 0, seconds = 0;
+          if (timeMatch) {
+            hours = parseInt(timeMatch[1]);
+            minutes = parseInt(timeMatch[2]);
+            seconds = timeMatch[3] ? parseInt(timeMatch[3]) : 0;
+            if (timeMatch[4]?.toLowerCase() === "pm" && hours < 12) hours += 12;
+            if (timeMatch[4]?.toLowerCase() === "am" && hours === 12) hours = 0;
           }
-          updated.payrollDate = Math.floor(new Date(year, month, day).getTime() / 1000);
+
+          parsedDate = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
         } else {
-          return { result: JSON.stringify({ error: "Could not parse date: " + dateStr }), updatedPayroll: updated };
+          return { result: JSON.stringify({ error: "Could not parse date/time: " + dateStr + ". Please provide a full date and time (e.g., '15th June 2025 at 2:30 PM UTC' or '2025-06-15T14:30:00Z')." }), updatedPayroll: updated };
         }
-      } else {
-        updated.payrollDate = Math.floor(parsedDate.getTime() / 1000);
       }
+
+      // Reject past dates
+      if (parsedDate <= now) {
+        return {
+          result: JSON.stringify({
+            error: "Cannot set a payroll date in the past. The provided date/time (" + parsedDate.toISOString() + ") has already passed. Current time is " + now.toISOString() + ". Please provide a future date and time.",
+          }),
+          updatedPayroll: updated,
+        };
+      }
+
+      updated.payrollDate = Math.floor(parsedDate.getTime() / 1000);
       const date = new Date(updated.payrollDate * 1000);
       return {
         result: JSON.stringify({
           success: true,
           payrollDate: updated.payrollDate,
-          formattedDate: date.toLocaleDateString("en-US", {
+          formattedDateTime: date.toLocaleString("en-US", {
             weekday: "long",
             year: "numeric",
             month: "long",
             day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+            timeZone: "UTC",
+            timeZoneName: "short",
           }),
         }),
         updatedPayroll: updated,
@@ -304,19 +356,39 @@ async function executeTool(
     }
 
     case "parse_csv_recipients": {
-      const csvData = args.csvData as string;
       try {
-        const records = parse(csvData, {
-          columns: true,
-          skip_empty_lines: true,
-          trim: true,
-        });
-        const recipients: PayrollRecipient[] = records.map(
-          (record: { address: string; amount: string }) => ({
-            wallet: record.address as Address,
-            amount: parseUnits(record.amount, 6),
-          })
-        );
+        let recipients: PayrollRecipient[] = [];
+        const aiRecipients = args.recipients as Array<{ address: string; amount: string }> | undefined;
+        const csvData = args.csvData as string | undefined;
+
+        if (aiRecipients && aiRecipients.length > 0) {
+          // AI-parsed recipients from plain text message
+          recipients = aiRecipients.map((r) => ({
+            wallet: r.address as Address,
+            amount: parseUnits(r.amount, 6),
+          }));
+        } else if (csvData) {
+          // CSV file/string with headers
+          const records = parse(csvData, {
+            columns: true,
+            skip_empty_lines: true,
+            trim: true,
+          });
+          recipients = records.map(
+            (record: { address: string; amount: string }) => ({
+              wallet: record.address as Address,
+              amount: parseUnits(record.amount, 6),
+            })
+          );
+        }
+
+        if (recipients.length === 0) {
+          return {
+            result: JSON.stringify({ error: "No recipients found. Please provide wallet addresses and amounts." }),
+            updatedPayroll: updated,
+          };
+        }
+
         const totalAmount = recipients.reduce((sum, r) => sum + r.amount, BigInt(0));
 
         // Store as strings for MongoDB
@@ -340,7 +412,7 @@ async function executeTool(
         };
       } catch (error) {
         return {
-          result: JSON.stringify({ error: "Failed to parse CSV: " + (error as Error).message }),
+          result: JSON.stringify({ error: "Failed to parse recipients: " + (error as Error).message }),
           updatedPayroll: updated,
         };
       }
@@ -362,21 +434,37 @@ async function executeTool(
 
     case "calculate_expected_return": {
       const amount = args.amount as number;
-      const days = args.daysUntilPayroll as number;
+
+      if (!updated.payrollDate) {
+        return { result: JSON.stringify({ error: "Payroll date not set. Please set the payroll date first using set_payroll_date." }), updatedPayroll: updated };
+      }
+
+      const now = new Date();
+      const payrollDate = new Date(updated.payrollDate * 1000);
+      const msUntilPayroll = payrollDate.getTime() - now.getTime();
+
+      if (msUntilPayroll <= 0) {
+        return { result: JSON.stringify({ error: "Payroll date has already passed. Please set a future payroll date." }), updatedPayroll: updated };
+      }
+
+      const daysUntilPayroll = msUntilPayroll / (1000 * 60 * 60 * 24);
+
       try {
         const bestYield = await defiLlamaService.getBestApy();
         if (!bestYield) {
           return { result: JSON.stringify({ error: "Could not fetch yield data" }), updatedPayroll: updated };
         }
         const annualYield = bestYield.apy / 100;
-        const periodYield = annualYield * (days / 365);
+        const periodYield = annualYield * (daysUntilPayroll / 365);
         const expectedReturn = amount * periodYield;
         return {
           result: JSON.stringify({
             depositAmount: amount,
-            daysUntilPayroll: days,
+            depositTime: now.toISOString(),
+            payrollDate: payrollDate.toISOString(),
+            daysUntilPayroll: Math.round(daysUntilPayroll * 100) / 100,
             apy: bestYield.apy.toFixed(2) + "%",
-            protocol: bestYield.project,
+            protocol: "Uniswap V4",
             chain: bestYield.chain,
             expectedYield: expectedReturn.toFixed(2),
             totalAtPayroll: (amount + expectedReturn).toFixed(2),
@@ -500,6 +588,28 @@ async function executeTool(
       }
     }
 
+    case "get_current_time": {
+      const now = new Date();
+      return {
+        result: JSON.stringify({
+          utc: now.toISOString(),
+          unix: Math.floor(now.getTime() / 1000),
+          formatted: now.toLocaleString("en-US", {
+            weekday: "long",
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            timeZone: "UTC",
+            timeZoneName: "short",
+          }),
+        }),
+        updatedPayroll: updated,
+      };
+    }
+
     case "get_ready_payrolls": {
       try {
         const readyIds = await contractService.getReadyPayrolls();
@@ -543,11 +653,13 @@ async function executeTool(
 
 const SYSTEM_PROMPT = `You are ArcFlow, an AI assistant that helps companies distribute payroll using DeFi.
 
+Deposited funds are placed into a Uniswap V4 USDC-USDT liquidity pool to earn yield from the moment of deposit until the payroll date.
+
 Your capabilities:
-1. Help users set up payroll distributions with a specific date
+1. Help users set up payroll distributions with a specific date and time
 2. Parse CSV files with employee wallet addresses and payment amounts
-3. Show expected yields from DeFi protocols (using live data)
-4. Generate blockchain transactions for USDC approval and deposit
+3. Show expected yields from Uniswap V4 LP positions (using live data)
+4. Generate blockchain transactions for USDC approval and deposit into Uniswap V4
 5. Track existing LP positions and accumulated yields
 6. Check withdrawable balances from Yellow Network Custody Contract
 7. Generate withdrawal transactions from Yellow Network
@@ -556,16 +668,17 @@ Your capabilities:
 
 Workflow for new payroll:
 1. Greet the user and ask how you can help
-2. Get the payroll date from the user
-3. Ask for employee data (CSV format: address,amount)
-4. Show expected returns based on time until payroll
-5. Guide through approval transaction (if needed)
-6. Generate deposit transaction
+2. Ask for the payroll date and time — the user MUST provide a full date AND time (e.g., "15th June 2025 at 2:30 PM UTC" or "2025-06-15T14:30:00Z"). Do NOT ask how many days — always ask for a specific date and time.
+3. ALWAYS call get_current_time first before setting the payroll date with set_payroll_date — this validates the date is in the future. Users cannot set a past date or time.
+4. Ask for employee data — users can type it in any format (e.g., "pay 0xABC 100 and 0xDEF 200") or upload a CSV file. When the user gives plain text, YOU (the AI) extract the wallet addresses and amounts and pass them as the 'recipients' array to parse_csv_recipients. Only use the 'csvData' parameter for actual CSV files.
+5. Show expected returns — yield is calculated automatically from deposit (now) until the payroll date. Do NOT ask the user for a number of days. Just call calculate_expected_return with the amount and it will compute everything.
+6. Guide through approval transaction (if needed)
+7. Generate deposit transaction — funds go into Uniswap V4 USDC-USDT pool
 
 Workflow for payroll execution (when payroll date arrives):
 1. Check for ready payrolls using get_ready_payrolls
 2. If payrolls are ready, generate execute transaction
-3. Execution will remove liquidity, swap to USDC, and bridge to Arc Chain
+3. Execution will remove liquidity from Uniswap V4, swap to USDC, and bridge to Arc Chain
 
 Workflow for withdrawal (after payroll distribution):
 1. Check withdrawable balance from Yellow Network Custody
