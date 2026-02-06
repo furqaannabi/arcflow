@@ -504,9 +504,51 @@ async function executeTool(
         return { result: JSON.stringify({ error: "Total amount not calculated" }), updatedPayroll: updated };
       }
 
+      // Pre-flight checks: verify balance and allowance before generating tx
+      const totalAmountBigInt = BigInt(updated.totalAmount);
+      const totalAmountFormatted = (Number(totalAmountBigInt) / 1e6).toFixed(2);
+      try {
+        const balance = await contractService.getUsdcBalance(userAddress);
+        const allowance = await contractService.getAllowance(userAddress);
+        const balanceBigInt = parseUnits(balance, 6);
+        const allowanceBigInt = parseUnits(allowance, 6);
+
+        if (balanceBigInt < totalAmountBigInt) {
+          return {
+            result: JSON.stringify({
+              error: `Insufficient USDC balance. You have ${balance} USDC but need ${totalAmountFormatted} USDC. Please fund your wallet first.`,
+            }),
+            updatedPayroll: updated,
+          };
+        }
+
+        if (allowanceBigInt < totalAmountBigInt) {
+          return {
+            result: JSON.stringify({
+              error: `Insufficient USDC approval. Current allowance is ${allowance} USDC but need ${totalAmountFormatted} USDC. Please approve the router first using the approval transaction.`,
+              needsApproval: true,
+              currentAllowance: allowance,
+              requiredAmount: totalAmountFormatted,
+            }),
+            updatedPayroll: updated,
+          };
+        }
+      } catch (err) {
+        // If pre-flight checks fail, still generate the tx but warn
+        console.warn("Pre-flight check failed:", (err as Error).message);
+      }
+
+      // Verify payroll date is still in the future
+      if (updated.payrollDate <= Math.floor(Date.now() / 1000)) {
+        return {
+          result: JSON.stringify({ error: "Payroll date has already passed. Please set a new future date." }),
+          updatedPayroll: updated,
+        };
+      }
+
       const contractRecipients = toContractRecipients(updated.recipients);
       const txData = contractService.generateDepositCalldata(
-        BigInt(updated.totalAmount),
+        totalAmountBigInt,
         BigInt(updated.payrollDate),
         contractRecipients
       );
@@ -514,7 +556,7 @@ async function executeTool(
         result: JSON.stringify({
           to: txData.to,
           data: txData.data,
-          description: `Deposit ${(Number(BigInt(updated.totalAmount)) / 1e6).toFixed(2)} USDC for payroll`,
+          description: `Deposit ${totalAmountFormatted} USDC for payroll into Uniswap V4`,
           payrollDate: new Date(updated.payrollDate * 1000).toISOString(),
           recipientCount: updated.recipients.length,
         }),
@@ -770,7 +812,10 @@ router.post("/chat", upload.single("file"), async (req: Request, res: Response) 
 
     // Convert to OpenAI format
     let messages = toOpenAIMessages(session.messages);
-    let pendingPayroll: IPendingPayroll = session.pendingPayroll || {};
+    // Convert Mongoose subdocument to plain object so spread operator works in executeTool
+    let pendingPayroll: IPendingPayroll = session.pendingPayroll
+      ? JSON.parse(JSON.stringify(session.pendingPayroll))
+      : {};
 
     // Track transaction data from tool calls
     const transactions: Array<{ type: string; to: string; data: string; description: string; [key: string]: any }> = [];
