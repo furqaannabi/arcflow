@@ -114,7 +114,7 @@ export class YellowSDKClient {
         challengeDuration: this.config.challengeDuration,
       });
     } catch (error) {
-      console.warn("[YELLOW SDK] NitroliteClient initialization warning:", error);
+      // NitroliteClient initialization failed silently
     }
 
     // Generate session key for channel operations
@@ -123,19 +123,16 @@ export class YellowSDKClient {
     this.sessionAccount = privateKeyToAccount(sessionPrivateKey);
 
     console.log("[YELLOW SDK] Initialized with address:", this.account.address);
-    console.log("[YELLOW SDK] Session key:", this.sessionAccount.address);
   }
 
   // ============ Connection ============
 
   async connect(): Promise<void> {
     if (this.connected) {
-      console.log("[YELLOW SDK] Already connected");
       return;
     }
 
     return new Promise((resolve, reject) => {
-      console.log("[YELLOW SDK] Connecting to:", this.config.wsUrl);
       this.ws = new WebSocket(this.config.wsUrl);
 
       const timeout = setTimeout(() => {
@@ -146,20 +143,17 @@ export class YellowSDKClient {
       this.ws.on("open", () => {
         clearTimeout(timeout);
         this.connected = true;
-        console.log("[YELLOW SDK] Connected to ClearNode");
         resolve();
       });
 
       this.ws.on("error", (err) => {
         clearTimeout(timeout);
-        console.error("[YELLOW SDK] WebSocket error:", err);
         reject(err);
       });
 
       this.ws.on("close", () => {
         this.connected = false;
         this.authenticated = false;
-        console.log("[YELLOW SDK] Disconnected from ClearNode");
       });
 
       this.ws.on("message", (data) => {
@@ -185,7 +179,6 @@ export class YellowSDKClient {
     }
 
     if (this.authenticated) {
-      console.log("[YELLOW SDK] Already authenticated");
       return;
     }
 
@@ -209,7 +202,6 @@ export class YellowSDKClient {
           scope: "arcflow.payroll",
         });
 
-        console.log("[YELLOW SDK] Sending auth request...");
         this.ws!.send(authRequestMsg);
       } catch (error) {
         clearTimeout(timeout);
@@ -220,7 +212,6 @@ export class YellowSDKClient {
 
   private async handleAuthChallenge(challenge: string): Promise<void> {
     try {
-      console.log("[YELLOW SDK] Handling auth challenge...");
       const signer = createEIP712AuthMessageSigner(
         this.walletClient as any,
         {
@@ -235,7 +226,6 @@ export class YellowSDKClient {
       const verifyMsg = await createAuthVerifyMessageFromChallenge(signer, challenge);
       this.ws?.send(verifyMsg);
     } catch (error) {
-      console.error("[YELLOW SDK] Auth challenge error:", error);
       this.authReject?.(error as Error);
     }
   }
@@ -269,7 +259,6 @@ export class YellowSDKClient {
           }
         );
 
-        console.log("[YELLOW SDK] Creating channel...");
         this.ws!.send(createChannelMsg);
       } catch (error) {
         clearTimeout(timeout);
@@ -308,7 +297,6 @@ export class YellowSDKClient {
           funds_destination: this.account.address,
         });
 
-        console.log(`[YELLOW SDK] Funding channel with ${amount} units...`);
         this.ws!.send(resizeMsg);
       } catch (error) {
         clearTimeout(timeout);
@@ -345,7 +333,6 @@ export class YellowSDKClient {
           this.account.address
         );
 
-        console.log("[YELLOW SDK] Closing channel...");
         this.ws!.send(closeMsg);
       } catch (error) {
         clearTimeout(timeout);
@@ -356,9 +343,7 @@ export class YellowSDKClient {
   }
 
   async withdraw(amount: bigint): Promise<string> {
-    console.log(`[YELLOW SDK] Withdrawing ${amount} from custody...`);
     const tx = await this.client.withdrawal(this.config.token, amount);
-    console.log("[YELLOW SDK] Withdrawal tx:", tx);
     return tx as string;
   }
 
@@ -367,15 +352,14 @@ export class YellowSDKClient {
   private async handleMessage(data: string): Promise<void> {
     try {
       const response = JSON.parse(data);
-      const type = response.res?.[0];
-
-      console.log("[YELLOW SDK] Received:", type);
+      const type = response.res?.[1];
 
       switch (type) {
         case "auth_challenge":
           await this.handleAuthChallenge(response.res[2].challenge_message);
           break;
 
+        case "auth_verify":
         case "auth_success":
           this.authenticated = true;
           console.log("[YELLOW SDK] Authenticated successfully");
@@ -397,15 +381,20 @@ export class YellowSDKClient {
           break;
 
         case "error":
-          console.error("[YELLOW SDK] Error from ClearNode:", response.res[2]);
+          console.error("[YELLOW SDK] Error:", response.res[2]?.error || response.res[2]);
           this.handleError(response.res[2]);
           break;
 
+        case "assets":
+        case "channels":
+        case "bu":
+          break;
+
         default:
-          console.log("[YELLOW SDK] Unknown message type:", type, response);
+          break;
       }
     } catch (error) {
-      console.error("[YELLOW SDK] Error handling message:", error);
+      // Message parse/handle error
     }
   }
 
@@ -419,16 +408,13 @@ export class YellowSDKClient {
         status: "pending",
       };
 
-      console.log("[YELLOW SDK] Channel created:", this.channelId);
-
       // Submit channel creation to chain
       if (channelData.channel && channelData.unsignedInitialState && channelData.serverSignature) {
-        const createResult = await this.client.createChannel({
+        await this.client.createChannel({
           channel: channelData.channel,
           unsignedInitialState: channelData.unsignedInitialState,
           serverSignature: channelData.serverSignature,
         });
-        console.log("[YELLOW SDK] Channel submitted to chain:", createResult);
         this.channelInfo.status = "open";
       }
 
@@ -441,7 +427,6 @@ export class YellowSDKClient {
         }
       }
     } catch (error) {
-      console.error("[YELLOW SDK] Error handling create channel:", error);
       for (const [id, op] of this.pendingOperations.entries()) {
         if (op.type === "create") {
           op.reject(error as Error);
@@ -455,7 +440,6 @@ export class YellowSDKClient {
   private async handleResizeChannelResponse(response: any): Promise<void> {
     try {
       const resizeData = response.res[2];
-      console.log("[YELLOW SDK] Channel resized:", resizeData);
 
       // Submit resize proof to chain
       if (resizeData.resizeState && resizeData.proofStates) {
@@ -463,7 +447,6 @@ export class YellowSDKClient {
           resizeState: resizeData.resizeState,
           proofStates: resizeData.proofStates,
         });
-        console.log("[YELLOW SDK] Resize submitted to chain");
         if (this.channelInfo) {
           this.channelInfo.status = "funded";
         }
@@ -478,7 +461,6 @@ export class YellowSDKClient {
         }
       }
     } catch (error) {
-      console.error("[YELLOW SDK] Error handling resize:", error);
       for (const [id, op] of this.pendingOperations.entries()) {
         if (op.type === "resize") {
           op.reject(error as Error);
@@ -492,7 +474,6 @@ export class YellowSDKClient {
   private async handleCloseChannelResponse(response: any): Promise<void> {
     try {
       const closeData = response.res[2];
-      console.log("[YELLOW SDK] Channel closing:", closeData);
 
       // Submit close to chain
       if (closeData.finalState && closeData.stateData) {
@@ -500,7 +481,6 @@ export class YellowSDKClient {
           finalState: closeData.finalState,
           stateData: closeData.stateData,
         });
-        console.log("[YELLOW SDK] Close submitted to chain");
         if (this.channelInfo) {
           this.channelInfo.status = "closed";
         }
@@ -517,7 +497,6 @@ export class YellowSDKClient {
         }
       }
     } catch (error) {
-      console.error("[YELLOW SDK] Error handling close:", error);
       for (const [id, op] of this.pendingOperations.entries()) {
         if (op.type === "close") {
           op.reject(error as Error);
@@ -530,7 +509,6 @@ export class YellowSDKClient {
 
   private handleError(error: any): void {
     const errorMsg = error?.message || error?.error || JSON.stringify(error);
-    console.error("[YELLOW SDK] ClearNode error:", errorMsg);
 
     // Reject any pending auth
     if (this.authReject) {
