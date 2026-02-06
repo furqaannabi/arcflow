@@ -1,12 +1,29 @@
 import { Router, Request, Response } from "express";
 import OpenAI from "openai";
+import multer from "multer";
 import { parse } from "csv-parse/sync";
 import { parseUnits, type Address } from "viem";
+import { v4 as uuidv4 } from "uuid";
 import { ContractService, type PayrollRecipient } from "../contracts";
 import { DefiLlamaService } from "../defillama";
 import { YellowNetworkService } from "../yellow";
+import { ChatSession, type IMessage, type IPendingPayroll } from "../models/ChatSession";
 
 const router = Router();
+
+// Configure multer for file uploads
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (_req, file, cb) => {
+    // Only accept CSV files
+    if (file.mimetype === "text/csv" || file.originalname.endsWith(".csv")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only CSV files are allowed"));
+    }
+  },
+});
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -16,20 +33,6 @@ const openai = new OpenAI({
 const contractService = new ContractService(process.env.RPC_URL);
 const defiLlamaService = new DefiLlamaService();
 const yellowService = new YellowNetworkService(process.env.RPC_URL);
-
-// Store conversation history per session
-const sessions = new Map<string, OpenAI.Chat.ChatCompletionMessageParam[]>();
-
-// Store pending payroll data per session
-const pendingPayrolls = new Map<
-  string,
-  {
-    payrollDate?: number;
-    recipients?: PayrollRecipient[];
-    totalAmount?: bigint;
-    userAddress?: Address;
-  }
->();
 
 // Tool definitions for OpenAI function calling
 const tools: OpenAI.Chat.ChatCompletionTool[] = [
@@ -239,20 +242,28 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
   },
 ];
 
+// Helper to convert MongoDB pending payroll to contract format
+function toContractRecipients(recipients?: Array<{ wallet: string; amount: string }>): PayrollRecipient[] {
+  if (!recipients) return [];
+  return recipients.map(r => ({
+    wallet: r.wallet as Address,
+    amount: BigInt(r.amount),
+  }));
+}
+
 // Tool implementations
 async function executeTool(
-  sessionId: string,
   name: string,
-  args: Record<string, unknown>
-): Promise<string> {
-  const pendingPayroll = pendingPayrolls.get(sessionId) || {};
+  args: Record<string, unknown>,
+  pendingPayroll: IPendingPayroll
+): Promise<{ result: string; updatedPayroll: IPendingPayroll }> {
+  const updated = { ...pendingPayroll };
 
   switch (name) {
     case "set_payroll_date": {
       const dateStr = args.date as string;
       const parsedDate = new Date(dateStr);
       if (isNaN(parsedDate.getTime())) {
-        // Try to parse natural language dates
         const now = new Date();
         const monthMatch = dateStr.match(
           /(\d{1,2})(?:st|nd|rd|th)?\s*(january|february|march|april|may|june|july|august|september|october|november|december)/i
@@ -269,27 +280,27 @@ async function executeTool(
           if (potentialDate < now) {
             year++;
           }
-          pendingPayroll.payrollDate = Math.floor(
-            new Date(year, month, day).getTime() / 1000
-          );
+          updated.payrollDate = Math.floor(new Date(year, month, day).getTime() / 1000);
         } else {
-          return JSON.stringify({ error: "Could not parse date: " + dateStr });
+          return { result: JSON.stringify({ error: "Could not parse date: " + dateStr }), updatedPayroll: updated };
         }
       } else {
-        pendingPayroll.payrollDate = Math.floor(parsedDate.getTime() / 1000);
+        updated.payrollDate = Math.floor(parsedDate.getTime() / 1000);
       }
-      pendingPayrolls.set(sessionId, pendingPayroll);
-      const date = new Date(pendingPayroll.payrollDate * 1000);
-      return JSON.stringify({
-        success: true,
-        payrollDate: pendingPayroll.payrollDate,
-        formattedDate: date.toLocaleDateString("en-US", {
-          weekday: "long",
-          year: "numeric",
-          month: "long",
-          day: "numeric",
+      const date = new Date(updated.payrollDate * 1000);
+      return {
+        result: JSON.stringify({
+          success: true,
+          payrollDate: updated.payrollDate,
+          formattedDate: date.toLocaleDateString("en-US", {
+            weekday: "long",
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          }),
         }),
-      });
+        updatedPayroll: updated,
+      };
     }
 
     case "parse_csv_recipients": {
@@ -306,26 +317,32 @@ async function executeTool(
             amount: parseUnits(record.amount, 6),
           })
         );
-        const totalAmount = recipients.reduce(
-          (sum, r) => sum + r.amount,
-          BigInt(0)
-        );
-        pendingPayroll.recipients = recipients;
-        pendingPayroll.totalAmount = totalAmount;
-        pendingPayrolls.set(sessionId, pendingPayroll);
-        return JSON.stringify({
-          success: true,
-          recipientCount: recipients.length,
-          totalAmountUsdc: (Number(totalAmount) / 1e6).toFixed(2),
-          recipients: recipients.map((r) => ({
-            wallet: r.wallet,
-            amountUsdc: (Number(r.amount) / 1e6).toFixed(2),
-          })),
-        });
+        const totalAmount = recipients.reduce((sum, r) => sum + r.amount, BigInt(0));
+
+        // Store as strings for MongoDB
+        updated.recipients = recipients.map(r => ({
+          wallet: r.wallet,
+          amount: r.amount.toString(),
+        }));
+        updated.totalAmount = totalAmount.toString();
+
+        return {
+          result: JSON.stringify({
+            success: true,
+            recipientCount: recipients.length,
+            totalAmountUsdc: (Number(totalAmount) / 1e6).toFixed(2),
+            recipients: recipients.map((r) => ({
+              wallet: r.wallet,
+              amountUsdc: (Number(r.amount) / 1e6).toFixed(2),
+            })),
+          }),
+          updatedPayroll: updated,
+        };
       } catch (error) {
-        return JSON.stringify({
-          error: "Failed to parse CSV: " + (error as Error).message,
-        });
+        return {
+          result: JSON.stringify({ error: "Failed to parse CSV: " + (error as Error).message }),
+          updatedPayroll: updated,
+        };
       }
     }
 
@@ -334,12 +351,12 @@ async function executeTool(
       try {
         if (chain) {
           const yieldData = await defiLlamaService.getBestApy(chain);
-          return JSON.stringify(yieldData || { error: "No data for chain" });
+          return { result: JSON.stringify(yieldData || { error: "No data for chain" }), updatedPayroll: updated };
         }
         const yields = await defiLlamaService.getUsdcYields();
-        return JSON.stringify(yields.slice(0, 5));
+        return { result: JSON.stringify(yields.slice(0, 5)), updatedPayroll: updated };
       } catch (error) {
-        return JSON.stringify({ error: (error as Error).message });
+        return { result: JSON.stringify({ error: (error as Error).message }), updatedPayroll: updated };
       }
     }
 
@@ -349,22 +366,25 @@ async function executeTool(
       try {
         const bestYield = await defiLlamaService.getBestApy();
         if (!bestYield) {
-          return JSON.stringify({ error: "Could not fetch yield data" });
+          return { result: JSON.stringify({ error: "Could not fetch yield data" }), updatedPayroll: updated };
         }
         const annualYield = bestYield.apy / 100;
         const periodYield = annualYield * (days / 365);
         const expectedReturn = amount * periodYield;
-        return JSON.stringify({
-          depositAmount: amount,
-          daysUntilPayroll: days,
-          apy: bestYield.apy.toFixed(2) + "%",
-          protocol: bestYield.project,
-          chain: bestYield.chain,
-          expectedYield: expectedReturn.toFixed(2),
-          totalAtPayroll: (amount + expectedReturn).toFixed(2),
-        });
+        return {
+          result: JSON.stringify({
+            depositAmount: amount,
+            daysUntilPayroll: days,
+            apy: bestYield.apy.toFixed(2) + "%",
+            protocol: bestYield.project,
+            chain: bestYield.chain,
+            expectedYield: expectedReturn.toFixed(2),
+            totalAtPayroll: (amount + expectedReturn).toFixed(2),
+          }),
+          updatedPayroll: updated,
+        };
       } catch (error) {
-        return JSON.stringify({ error: (error as Error).message });
+        return { result: JSON.stringify({ error: (error as Error).message }), updatedPayroll: updated };
       }
     }
 
@@ -372,56 +392,65 @@ async function executeTool(
       const amount = args.amount as string;
       const amountBigInt = parseUnits(amount, 6);
       const txData = contractService.generateApprovalCalldata(amountBigInt);
-      return JSON.stringify({
-        to: txData.to,
-        data: txData.data,
-        description: `Approve ${amount} USDC for ArcFlow Router`,
-      });
+      return {
+        result: JSON.stringify({
+          to: txData.to,
+          data: txData.data,
+          description: `Approve ${amount} USDC for ArcFlow Router`,
+        }),
+        updatedPayroll: updated,
+      };
     }
 
     case "get_deposit_transaction": {
       const userAddress = args.userAddress as Address;
-      pendingPayroll.userAddress = userAddress;
-      pendingPayrolls.set(sessionId, pendingPayroll);
+      updated.userAddress = userAddress;
 
-      if (!pendingPayroll.payrollDate) {
-        return JSON.stringify({ error: "Payroll date not set" });
+      if (!updated.payrollDate) {
+        return { result: JSON.stringify({ error: "Payroll date not set" }), updatedPayroll: updated };
       }
-      if (!pendingPayroll.recipients || pendingPayroll.recipients.length === 0) {
-        return JSON.stringify({ error: "No recipients set" });
+      if (!updated.recipients || updated.recipients.length === 0) {
+        return { result: JSON.stringify({ error: "No recipients set" }), updatedPayroll: updated };
       }
-      if (!pendingPayroll.totalAmount) {
-        return JSON.stringify({ error: "Total amount not calculated" });
+      if (!updated.totalAmount) {
+        return { result: JSON.stringify({ error: "Total amount not calculated" }), updatedPayroll: updated };
       }
 
+      const contractRecipients = toContractRecipients(updated.recipients);
       const txData = contractService.generateDepositCalldata(
-        pendingPayroll.totalAmount,
-        BigInt(pendingPayroll.payrollDate),
-        pendingPayroll.recipients
+        BigInt(updated.totalAmount),
+        BigInt(updated.payrollDate),
+        contractRecipients
       );
-      return JSON.stringify({
-        to: txData.to,
-        data: txData.data,
-        description: `Deposit ${(Number(pendingPayroll.totalAmount) / 1e6).toFixed(2)} USDC for payroll`,
-        payrollDate: new Date(pendingPayroll.payrollDate * 1000).toISOString(),
-        recipientCount: pendingPayroll.recipients.length,
-      });
+      return {
+        result: JSON.stringify({
+          to: txData.to,
+          data: txData.data,
+          description: `Deposit ${(Number(BigInt(updated.totalAmount)) / 1e6).toFixed(2)} USDC for payroll`,
+          payrollDate: new Date(updated.payrollDate * 1000).toISOString(),
+          recipientCount: updated.recipients.length,
+        }),
+        updatedPayroll: updated,
+      };
     }
 
     case "get_user_positions": {
       const address = args.address as Address;
       try {
         const positions = await contractService.getPositions(address);
-        return JSON.stringify(
-          positions.map((p) => ({
-            payrollId: p.payrollId.toString(),
-            usdcDeposited: (Number(p.usdcDeposited) / 1e6).toFixed(2),
-            accumulatedYield: (Number(p.accumulatedYield) / 1e6).toFixed(2),
-            payrollDate: new Date(Number(p.payrollDate) * 1000).toISOString(),
-          }))
-        );
+        return {
+          result: JSON.stringify(
+            positions.map((p) => ({
+              payrollId: p.payrollId.toString(),
+              usdcDeposited: (Number(p.usdcDeposited) / 1e6).toFixed(2),
+              accumulatedYield: (Number(p.accumulatedYield) / 1e6).toFixed(2),
+              payrollDate: new Date(Number(p.payrollDate) * 1000).toISOString(),
+            }))
+          ),
+          updatedPayroll: updated,
+        };
       } catch (error) {
-        return JSON.stringify({ error: (error as Error).message });
+        return { result: JSON.stringify({ error: (error as Error).message }), updatedPayroll: updated };
       }
     }
 
@@ -429,9 +458,9 @@ async function executeTool(
       const address = args.address as Address;
       try {
         const balance = await contractService.getUsdcBalance(address);
-        return JSON.stringify({ balance, symbol: "USDC" });
+        return { result: JSON.stringify({ balance, symbol: "USDC" }), updatedPayroll: updated };
       } catch (error) {
-        return JSON.stringify({ error: (error as Error).message });
+        return { result: JSON.stringify({ error: (error as Error).message }), updatedPayroll: updated };
       }
     }
 
@@ -439,14 +468,17 @@ async function executeTool(
       const address = args.address as Address;
       try {
         const withdrawable = await yellowService.getWithdrawableBalance(address);
-        return JSON.stringify({
-          address: withdrawable.address,
-          withdrawableBalance: withdrawable.balance,
-          token: withdrawable.token,
-          custodyContract: yellowService.getCustodyAddress(),
-        });
+        return {
+          result: JSON.stringify({
+            address: withdrawable.address,
+            withdrawableBalance: withdrawable.balance,
+            token: withdrawable.token,
+            custodyContract: yellowService.getCustodyAddress(),
+          }),
+          updatedPayroll: updated,
+        };
       } catch (error) {
-        return JSON.stringify({ error: (error as Error).message });
+        return { result: JSON.stringify({ error: (error as Error).message }), updatedPayroll: updated };
       }
     }
 
@@ -455,28 +487,34 @@ async function executeTool(
       try {
         const amountBigInt = parseUnits(amount, 6);
         const txData = yellowService.generateWithdrawCalldata(amountBigInt);
-        return JSON.stringify({
-          to: txData.to,
-          data: txData.data,
-          description: txData.description,
-        });
+        return {
+          result: JSON.stringify({
+            to: txData.to,
+            data: txData.data,
+            description: txData.description,
+          }),
+          updatedPayroll: updated,
+        };
       } catch (error) {
-        return JSON.stringify({ error: (error as Error).message });
+        return { result: JSON.stringify({ error: (error as Error).message }), updatedPayroll: updated };
       }
     }
 
     case "get_ready_payrolls": {
       try {
         const readyIds = await contractService.getReadyPayrolls();
-        return JSON.stringify({
-          count: readyIds.length,
-          payrollIds: readyIds.map((id) => id.toString()),
-          message: readyIds.length > 0
-            ? `${readyIds.length} payroll(s) ready to execute`
-            : "No payrolls ready to execute",
-        });
+        return {
+          result: JSON.stringify({
+            count: readyIds.length,
+            payrollIds: readyIds.map((id) => id.toString()),
+            message: readyIds.length > 0
+              ? `${readyIds.length} payroll(s) ready to execute`
+              : "No payrolls ready to execute",
+          }),
+          updatedPayroll: updated,
+        };
       } catch (error) {
-        return JSON.stringify({ error: (error as Error).message });
+        return { result: JSON.stringify({ error: (error as Error).message }), updatedPayroll: updated };
       }
     }
 
@@ -484,22 +522,25 @@ async function executeTool(
       try {
         const readyIds = await contractService.getReadyPayrolls();
         if (readyIds.length === 0) {
-          return JSON.stringify({ error: "No payrolls ready to execute" });
+          return { result: JSON.stringify({ error: "No payrolls ready to execute" }), updatedPayroll: updated };
         }
         const txData = contractService.generateExecuteReadyPayrollsCalldata();
-        return JSON.stringify({
-          to: txData.to,
-          data: txData.data,
-          description: `Execute ${readyIds.length} ready payroll(s) and bridge USDC to Arc Chain`,
-          payrollCount: readyIds.length,
-        });
+        return {
+          result: JSON.stringify({
+            to: txData.to,
+            data: txData.data,
+            description: `Execute ${readyIds.length} ready payroll(s) and bridge USDC to Arc Chain`,
+            payrollCount: readyIds.length,
+          }),
+          updatedPayroll: updated,
+        };
       } catch (error) {
-        return JSON.stringify({ error: (error as Error).message });
+        return { result: JSON.stringify({ error: (error as Error).message }), updatedPayroll: updated };
       }
     }
 
     default:
-      return JSON.stringify({ error: "Unknown tool: " + name });
+      return { result: JSON.stringify({ error: "Unknown tool: " + name }), updatedPayroll: updated };
   }
 }
 
@@ -537,30 +578,88 @@ Always be helpful, concise, and guide users through the process step by step.
 Format currency amounts clearly (e.g., "1,000 USDC").
 When showing transactions, explain what each one does.`;
 
-router.post("/chat", async (req: Request, res: Response) => {
-  try {
-    const { message, sessionId = "default", userAddress } = req.body;
+// Convert MongoDB messages to OpenAI format
+function toOpenAIMessages(messages: IMessage[]): OpenAI.Chat.ChatCompletionMessageParam[] {
+  return messages.map((m) => {
+    if (m.role === "tool") {
+      return {
+        role: "tool" as const,
+        tool_call_id: m.tool_call_id || "",
+        content: m.content || "",
+      };
+    }
+    if (m.role === "assistant" && m.tool_calls) {
+      return {
+        role: "assistant" as const,
+        content: m.content,
+        tool_calls: m.tool_calls,
+      };
+    }
+    return {
+      role: m.role as "system" | "user" | "assistant",
+      content: m.content || "",
+    };
+  });
+}
 
-    if (!message) {
-      return res.status(400).json({ error: "Message is required" });
+router.post("/chat", upload.single("file"), async (req: Request, res: Response) => {
+  try {
+    const { message, sessionId: providedSessionId, userAddress } = req.body;
+    const file = req.file;
+
+    if (!message && !file) {
+      return res.status(400).json({ error: "Message or file is required" });
     }
 
     // Get or create session
-    let messages = sessions.get(sessionId);
-    if (!messages) {
-      messages = [{ role: "system", content: SYSTEM_PROMPT }];
-      sessions.set(sessionId, messages);
+    let sessionId = providedSessionId;
+    let session = sessionId ? await ChatSession.findOne({ sessionId }) : null;
+
+    if (!session) {
+      // Create new session
+      sessionId = uuidv4();
+      session = new ChatSession({
+        sessionId,
+        messages: [{ role: "system", content: SYSTEM_PROMPT, timestamp: new Date() }],
+        pendingPayroll: {},
+        lastActivity: new Date(),
+      });
+      await session.save();
+    }
+
+    // Check if file upload is allowed
+    if (file) {
+      const lastMessage = session.messages[session.messages.length - 1];
+      if (!lastMessage?.allowFileUpload) {
+        return res.status(400).json({ error: "File upload not allowed at this point" });
+      }
+    }
+
+    // Prepare user message content
+    let userContent = message || "";
+    if (file) {
+      // Parse CSV file and append to message
+      const csvData = file.buffer.toString("utf-8");
+      userContent = userContent
+        ? `${userContent}\n\nCSV File (${file.originalname}):\n${csvData}`
+        : `Please parse this CSV file:\n${csvData}`;
     }
 
     // Add user message
-    messages.push({ role: "user", content: message });
+    session.messages.push({
+      role: "user",
+      content: userContent,
+      timestamp: new Date(),
+    });
 
     // Store user address if provided
     if (userAddress) {
-      const pendingPayroll = pendingPayrolls.get(sessionId) || {};
-      pendingPayroll.userAddress = userAddress as Address;
-      pendingPayrolls.set(sessionId, pendingPayroll);
+      session.pendingPayroll.userAddress = userAddress;
     }
+
+    // Convert to OpenAI format
+    let messages = toOpenAIMessages(session.messages);
+    let pendingPayroll: IPendingPayroll = session.pendingPayroll || {};
 
     // Call OpenAI with tools
     let response = await openai.chat.completions.create({
@@ -574,23 +673,38 @@ router.post("/chat", async (req: Request, res: Response) => {
 
     // Handle tool calls
     while (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
-      messages.push(assistantMessage);
+      // Add assistant message with tool calls
+      session.messages.push({
+        role: "assistant",
+        content: assistantMessage.content,
+        tool_calls: assistantMessage.tool_calls.map(tc => ({
+          id: tc.id,
+          type: tc.type,
+          function: tc.function,
+        })),
+        timestamp: new Date(),
+      });
 
       // Execute each tool call
       for (const toolCall of assistantMessage.tool_calls) {
         const args = JSON.parse(toolCall.function.arguments);
-        const result = await executeTool(
-          sessionId,
+        const { result, updatedPayroll } = await executeTool(
           toolCall.function.name,
-          args
+          args,
+          pendingPayroll
         );
+        pendingPayroll = updatedPayroll;
 
-        messages.push({
+        session.messages.push({
           role: "tool",
           tool_call_id: toolCall.id,
           content: result,
+          timestamp: new Date(),
         });
       }
+
+      // Update messages for next call
+      messages = toOpenAIMessages(session.messages);
 
       // Get next response
       response = await openai.chat.completions.create({
@@ -603,23 +717,38 @@ router.post("/chat", async (req: Request, res: Response) => {
       assistantMessage = response.choices[0].message;
     }
 
-    // Add final assistant message
-    messages.push(assistantMessage);
-    sessions.set(sessionId, messages);
+    // Check if assistant is asking for CSV/file upload
+    const contentLower = (assistantMessage.content || "").toLowerCase();
+    const allowFileUpload = contentLower.includes("csv") ||
+      contentLower.includes("upload") ||
+      contentLower.includes("file") ||
+      contentLower.includes("employee data") ||
+      contentLower.includes("recipient");
 
-    // Get pending payroll state for response
-    const pendingPayroll = pendingPayrolls.get(sessionId);
+    // Add final assistant message
+    session.messages.push({
+      role: "assistant",
+      content: assistantMessage.content,
+      timestamp: new Date(),
+      allowFileUpload,
+    });
+
+    // Update session
+    session.pendingPayroll = pendingPayroll;
+    session.lastActivity = new Date();
+    await session.save();
 
     res.json({
       response: assistantMessage.content,
       sessionId,
+      allowFileUpload,
       state: pendingPayroll
         ? {
             hasPayrollDate: !!pendingPayroll.payrollDate,
-            hasRecipients: !!pendingPayroll.recipients?.length,
+            hasRecipients: !!(pendingPayroll.recipients?.length),
             recipientCount: pendingPayroll.recipients?.length || 0,
             totalAmount: pendingPayroll.totalAmount
-              ? (Number(pendingPayroll.totalAmount) / 1e6).toFixed(2)
+              ? (Number(BigInt(pendingPayroll.totalAmount)) / 1e6).toFixed(2)
               : null,
           }
         : null,
@@ -627,25 +756,6 @@ router.post("/chat", async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Chat error:", error);
     res.status(500).json({ error: "Failed to process chat message" });
-  }
-});
-
-// Endpoint to upload CSV directly
-router.post("/upload-csv", async (req: Request, res: Response) => {
-  try {
-    const { csvData, sessionId = "default" } = req.body;
-
-    if (!csvData) {
-      return res.status(400).json({ error: "CSV data is required" });
-    }
-
-    const result = await executeTool(sessionId, "parse_csv_recipients", {
-      csvData,
-    });
-    res.json(JSON.parse(result));
-  } catch (error) {
-    console.error("CSV upload error:", error);
-    res.status(500).json({ error: "Failed to parse CSV" });
   }
 });
 
@@ -661,23 +771,27 @@ router.get("/yields", async (_req: Request, res: Response) => {
 });
 
 // Endpoint to get session state
-router.get("/session/:sessionId", (req: Request, res: Response) => {
+router.get("/session/:sessionId", async (req: Request, res: Response) => {
   const { sessionId } = req.params;
-  const pendingPayroll = pendingPayrolls.get(sessionId);
+  const session = await ChatSession.findOne({ sessionId });
 
-  if (!pendingPayroll) {
+  if (!session) {
     return res.status(404).json({ error: "Session not found" });
   }
 
+  const pendingPayroll = session.pendingPayroll;
+  const lastMessage = session.messages[session.messages.length - 1];
+
   res.json({
-    hasPayrollDate: !!pendingPayroll.payrollDate,
-    payrollDate: pendingPayroll.payrollDate
+    hasPayrollDate: !!pendingPayroll?.payrollDate,
+    payrollDate: pendingPayroll?.payrollDate
       ? new Date(pendingPayroll.payrollDate * 1000).toISOString()
       : null,
-    recipientCount: pendingPayroll.recipients?.length || 0,
-    totalAmount: pendingPayroll.totalAmount
-      ? (Number(pendingPayroll.totalAmount) / 1e6).toFixed(2)
+    recipientCount: pendingPayroll?.recipients?.length || 0,
+    totalAmount: pendingPayroll?.totalAmount
+      ? (Number(BigInt(pendingPayroll.totalAmount)) / 1e6).toFixed(2)
       : null,
+    allowFileUpload: lastMessage?.allowFileUpload || false,
   });
 });
 
