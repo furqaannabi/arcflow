@@ -3,7 +3,6 @@ import { Send, Bot, FileText, X, Sparkles, TrendingUp, Users } from "lucide-reac
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import ChatMessage from "@/components/chat/ChatMessage";
-import CSVUpload from "@/components/chat/CSVUpload";
 import Sidebar from "@/components/Sidebar";
 import ConnectButton from "@/components/ConnectButton";
 
@@ -308,11 +307,6 @@ export default function AgentChat() {
             )}
             
             <div className="flex items-center gap-3">
-              <CSVUpload 
-                onFilesSelect={(files) => setSelectedFiles(prev => [...prev, ...files])} 
-                disabled={isLoading} 
-              />
-              
               <div className="flex-1 relative">
                 <textarea
                   ref={inputRef}
