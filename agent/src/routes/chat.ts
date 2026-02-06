@@ -521,16 +521,13 @@ async function executeTool(
     case "get_execute_payrolls_transaction": {
       try {
         const readyIds = await contractService.getReadyPayrolls();
-        if (readyIds.length === 0) {
-          return { result: JSON.stringify({ error: "No payrolls ready to execute" }), updatedPayroll: updated };
-        }
-        const txData = contractService.generateExecuteReadyPayrollsCalldata();
         return {
           result: JSON.stringify({
-            to: txData.to,
-            data: txData.data,
-            description: `Execute ${readyIds.length} ready payroll(s) and bridge USDC to Arc Chain`,
-            payrollCount: readyIds.length,
+            info: "Payroll execution now requires Yellow Network state channels",
+            readyCount: readyIds.length,
+            message: readyIds.length > 0
+              ? `${readyIds.length} payroll(s) ready. The agent will automatically execute them via Yellow Network.`
+              : "No payrolls ready to execute yet.",
           }),
           updatedPayroll: updated,
         };

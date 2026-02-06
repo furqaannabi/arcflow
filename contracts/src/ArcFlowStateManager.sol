@@ -373,12 +373,10 @@ contract ArcFlowStateManager is Ownable {
     }
 
     /// @notice Verify a channel state hash with signature
-    /// @param channelId Channel identifier
     /// @param stateHash Hash of the channel state
     /// @param signature Signature from authorized agent
     /// @return valid Whether the signature is valid
-    function verifyChannelState(
-        bytes32 channelId,
+    function verifyChannelState(        
         bytes32 stateHash,
         bytes calldata signature
     ) external view returns (bool valid) {

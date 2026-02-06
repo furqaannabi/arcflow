@@ -5,24 +5,14 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-
 import {IGatewayWallet} from "./interfaces/ICircleGateway.sol";
 import {ArcFlowStateManager} from "./ArcFlowStateManager.sol";
 import {ArcFlowBase} from "./ArcFlowBase.sol";
 import {LPPosition} from "./ArcFlowTypes.sol";
 import {PayrollRecipient} from "./structs/ArcPayrollDistributorStructs.sol";
 
-/// @title ArcFlow Router
-/// @notice Single-sided USDC deposit into existing USDC-USDT pool
-/// @dev Supports both direct execution and Yellow Network state channel execution
 contract ArcFlowRouter is ArcFlowBase {
     using SafeERC20 for IERC20;
-
-    /// @notice Execution mode for payroll distribution
-    enum ExecutionMode {
-        Direct,      // Direct on-chain execution via Circle Gateway
-        StateChannel // Yellow Network state channel execution
-    }
 
     error ZeroAmount();
     error InvalidDate();
@@ -31,66 +21,49 @@ contract ArcFlowRouter is ArcFlowBase {
     error NotReady();
     error WrongChain();
     error InvalidChannelState();
-    error ChannelNotSettled();
 
     event Deposited(uint256 indexed payrollId, address indexed provider, uint256 usdcAmount, uint128 liquidity);
-    event Withdrawn(uint256 indexed payrollId, address indexed provider, uint256 usdcBridged, uint256 yield);
-    event AgentUpdated(address oldAgent, address newAgent);
+    event Withdrawn(uint256 indexed payrollId, address indexed provider, uint256 usdcBridged, uint256 yieldAmt);
     event ChannelSettled(uint256 indexed payrollId, bytes32 indexed channelId, uint256 amount);
 
-    mapping(address => uint256) public providerAccumulatedYield;
-    address public migrationContract;
+    mapping(address => uint256) public providerYield;
+    address public migration;
 
     constructor(
-        IPoolManager _poolManager,
-        PoolKey memory _existingPoolKey,
-        address _gatewayWallet,
-        address _stateManager
-    ) ArcFlowBase(_poolManager, _existingPoolKey, _gatewayWallet, _stateManager) {}
+        IPoolManager _pm,
+        PoolKey memory _pk,
+        address _gw,
+        address _sm
+    ) ArcFlowBase(_pm, _pk, _gw, _sm) {}
 
-    function setAgent(address _agent) external onlyOwner {
-        emit AgentUpdated(agent, _agent);
-        agent = _agent;
-    }
-
-    function setMigrationContract(address _migration) external onlyOwner {
-        migrationContract = _migration;
-    }
-
-    function setGatewayWallet(address _gateway) external onlyOwner {
-        gatewayWallet = IGatewayWallet(_gateway);
-    }
-
-    function setStateManager(address _stateManager) external onlyOwner {
-        stateManager = ArcFlowStateManager(_stateManager);
-    }
+    function setAgent(address _a) external onlyOwner { agent = _a; }
+    function setMigration(address _m) external onlyOwner { migration = _m; }
+    function setGateway(address _g) external onlyOwner { gatewayWallet = IGatewayWallet(_g); }
+    function setStateMgr(address _s) external onlyOwner { stateManager = ArcFlowStateManager(_s); }
 
     function deposit(
-        uint256 usdcAmount,
-        uint256 payrollDate,
-        PayrollRecipient[] calldata recipients
-    ) external returns (uint256 payrollId, uint128 liquidity) {
-        if (usdcAmount == 0) revert ZeroAmount();
-        if (payrollDate <= block.timestamp) revert InvalidDate();
-        if (recipients.length == 0) revert NoRecipients();
+        uint256 amt,
+        uint256 date,
+        PayrollRecipient[] calldata r
+    ) external returns (uint256 pid, uint128 liq) {
+        if (amt == 0) revert ZeroAmount();
+        if (date <= block.timestamp) revert InvalidDate();
+        if (r.length == 0) revert NoRecipients();
 
-        usdc.safeTransferFrom(msg.sender, address(this), usdcAmount);
+        usdc.safeTransferFrom(msg.sender, address(this), amt);
+        uint256 half = amt / 2;
+        liq = _addLiquidity(amt - half, _swap(true, half));
+        pid = ++nextPayrollId;
+        bytes32 rHash = keccak256(abi.encode(r));
 
-        uint256 half = usdcAmount / 2;
-        uint256 usdtReceived = _swap(true, half);
-        liquidity = _addLiquidity(usdcAmount - half, usdtReceived);
-
-        payrollId = ++nextPayrollId;
-        bytes32 rHash = keccak256(abi.encode(recipients));
-
-        positions[payrollId] = LPPosition({
-            payrollId: payrollId,
+        positions[pid] = LPPosition({
+            payrollId: pid,
             provider: msg.sender,
-            liquidity: liquidity,
-            usdcDeposited: usdcAmount,
+            liquidity: liq,
+            usdcDeposited: amt,
             depositTime: block.timestamp,
-            payrollDate: payrollDate,
-            payrollStateHash: keccak256(abi.encodePacked(payrollId, msg.sender, usdcAmount, payrollDate, block.chainid, rHash)),
+            payrollDate: date,
+            payrollStateHash: keccak256(abi.encodePacked(pid, msg.sender, amt, date, block.chainid, rHash)),
             accumulatedYield: 0,
             sourceChainId: block.chainid,
             currentChainId: block.chainid,
@@ -98,136 +71,90 @@ contract ArcFlowRouter is ArcFlowBase {
             recipientsHash: rHash
         });
 
-        totalLiquidity += liquidity;
-        providerPayrolls[msg.sender].push(payrollId);
-        payrollIdIndex[payrollId] = activePayrollIds.length;
-        activePayrollIds.push(payrollId);
-
-        emit Deposited(payrollId, msg.sender, usdcAmount, liquidity);
+        totalLiquidity += liq;
+        providerPayrolls[msg.sender].push(pid);
+        payrollIdIndex[pid] = activePayrollIds.length;
+        activePayrollIds.push(pid);
+        emit Deposited(pid, msg.sender, amt, liq);
     }
 
-    /// @notice Internal withdraw logic - only callable via settleFromChannel
-    function _executeWithdrawInternal(uint256 payrollId) internal returns (uint256 usdcAmount) {
-        LPPosition memory pos = positions[payrollId];
-        if (pos.liquidity == 0) revert NoPosition();
-        if (block.timestamp < pos.payrollDate) revert NotReady();
-        if (pos.currentChainId != chainId) revert WrongChain();
+    function _withdraw(uint256 pid) internal returns (uint256 amt) {
+        LPPosition memory p = positions[pid];
+        if (p.liquidity == 0) revert NoPosition();
+        if (block.timestamp < p.payrollDate) revert NotReady();
+        if (p.currentChainId != chainId) revert WrongChain();
 
-        (uint256 usdc0, uint256 usdt0) = _removeLiquidity(pos.liquidity);
-        if (usdt0 > 0) usdc0 += _swap(false, usdt0);
+        (uint256 u0, uint256 u1) = _removeLiquidity(p.liquidity);
+        if (u1 > 0) u0 += _swap(false, u1);
 
-        uint256 yieldAmt = 0;
-        if (usdc0 > pos.usdcDeposited) {
-            yieldAmt = usdc0 - pos.usdcDeposited;
-            usdcAmount = pos.usdcDeposited;
-            providerAccumulatedYield[pos.provider] += yieldAmt;
-            usdc.safeTransfer(pos.provider, yieldAmt);
-        } else {
-            usdcAmount = usdc0;
-        }
+        uint256 y = 0;
+        if (u0 > p.usdcDeposited) {
+            y = u0 - p.usdcDeposited;
+            amt = p.usdcDeposited;
+            providerYield[p.provider] += y;
+            usdc.safeTransfer(p.provider, y);
+        } else { amt = u0; }
 
-        totalLiquidity -= pos.liquidity;
-        delete positions[payrollId];
-        _removePayroll(payrollId);
-        _removeFromProviderPayrolls(pos.provider, payrollId);
-
-        emit Withdrawn(payrollId, pos.provider, usdcAmount, yieldAmt);
+        totalLiquidity -= p.liquidity;
+        delete positions[pid];
+        _removePayroll(pid);
+        _removeFromProviderPayrolls(p.provider, pid);
+        emit Withdrawn(pid, p.provider, amt, y);
     }
 
-    // Migration helpers - called by migration contract
-    function removeLiquidityFor(uint256 payrollId) external returns (uint256) {
-        require(msg.sender == migrationContract, "Only migration");
-        LPPosition storage pos = positions[payrollId];
-        (uint256 usdc0, uint256 usdt0) = _removeLiquidity(pos.liquidity);
-        if (usdt0 > 0) usdc0 += _swap(false, usdt0);
-        totalLiquidity -= pos.liquidity;
-        pos.liquidity = 0;
-        usdc.safeTransfer(msg.sender, usdc0);
-        return usdc0;
+    modifier onlyMigration() { require(msg.sender == migration, "!mig"); _; }
+
+    function removeLiqFor(uint256 pid) external onlyMigration returns (uint256) {
+        LPPosition storage p = positions[pid];
+        (uint256 u0, uint256 u1) = _removeLiquidity(p.liquidity);
+        if (u1 > 0) u0 += _swap(false, u1);
+        totalLiquidity -= p.liquidity;
+        p.liquidity = 0;
+        usdc.safeTransfer(msg.sender, u0);
+        return u0;
     }
 
-    function addLiquidityFor(uint256 payrollId, uint256 amount) external returns (uint128) {
-        require(msg.sender == migrationContract, "Only migration");
-        usdc.safeTransferFrom(msg.sender, address(this), amount);
-        uint256 half = amount / 2;
-        uint256 usdtReceived = _swap(true, half);
-        uint128 liq = _addLiquidity(amount - half, usdtReceived);
-        positions[payrollId].liquidity = liq;
+    function addLiqFor(uint256 pid, uint256 amt) external onlyMigration returns (uint128) {
+        usdc.safeTransferFrom(msg.sender, address(this), amt);
+        uint256 half = amt / 2;
+        uint128 liq = _addLiquidity(amt - half, _swap(true, half));
+        positions[pid].liquidity = liq;
         totalLiquidity += liq;
         return liq;
     }
 
-    function updatePositionChain(uint256 payrollId, uint256 targetChainId) external {
-        require(msg.sender == migrationContract, "Only migration");
-        positions[payrollId].currentChainId = targetChainId;
-        positions[payrollId].migrationCount++;
+    function updatePosChain(uint256 pid, uint256 cid) external onlyMigration {
+        positions[pid].currentChainId = cid;
+        positions[pid].migrationCount++;
     }
 
-    function getPositionData(uint256 payrollId) external view returns (uint128, uint256, uint256) {
-        LPPosition memory p = positions[payrollId];
+    function getPosData(uint256 pid) external view returns (uint128, uint256, uint256) {
+        LPPosition memory p = positions[pid];
         return (p.liquidity, p.currentChainId, p.payrollDate);
     }
 
-    function getPosition(uint256 payrollId) external view returns (LPPosition memory) {
-        return positions[payrollId];
-    }
+    function getPos(uint256 pid) external view returns (LPPosition memory) { return positions[pid]; }
+    function getProviderPayrolls(address p) external view returns (uint256[] memory) { return providerPayrolls[p]; }
+    function getActiveIds() external view returns (uint256[] memory) { return activePayrollIds; }
+    function rescue(address t, uint256 a) external onlyOwner { IERC20(t).safeTransfer(owner, a); }
 
-    function getProviderPayrolls(address provider) external view returns (uint256[] memory) {
-        return providerPayrolls[provider];
-    }
+    function settle(
+        uint256 pid,
+        bytes32 cid,
+        bytes calldata sig
+    ) external onlyAgent returns (uint256 amt) {
+        LPPosition memory p = positions[pid];
+        if (p.liquidity == 0) revert NoPosition();
+        if (block.timestamp < p.payrollDate) revert NotReady();
+        if (p.currentChainId != chainId) revert WrongChain();
 
-    function getActivePayrollIds() external view returns (uint256[] memory) {
-        return activePayrollIds;
-    }
+        bytes32 h = keccak256(abi.encodePacked(cid, pid, p.usdcDeposited));
+        if (!stateManager.verifyChannelState(h, sig)) revert InvalidChannelState();
 
-    function emergencyWithdraw(address token, uint256 amount) external onlyOwner {
-        IERC20(token).safeTransfer(owner, amount);
-    }
-
-    // ============ Yellow Network State Channel Functions ============
-
-    /// @notice Settle a payroll from Yellow Network state channel (REQUIRED)
-    /// @dev This is the ONLY way to execute payrolls. Direct execution is disabled.
-    /// @param payrollId The payroll to settle
-    /// @param channelId The Yellow Network channel ID
-    /// @param stateSignature Signature from authorized agent verifying the channel state
-    function settleFromChannel(
-        uint256 payrollId,
-        bytes32 channelId,
-        bytes calldata stateSignature
-    ) external onlyAgent returns (uint256 usdcAmount) {
-        LPPosition memory pos = positions[payrollId];
-        if (pos.liquidity == 0) revert NoPosition();
-        if (block.timestamp < pos.payrollDate) revert NotReady();
-        if (pos.currentChainId != chainId) revert WrongChain();
-
-        // Verify the Yellow Network channel state signature (REQUIRED)
-        bytes32 stateHash = keccak256(abi.encodePacked(channelId, payrollId, pos.usdcDeposited));
-        bool valid = stateManager.verifyChannelState(channelId, stateHash, stateSignature);
-        if (!valid) revert InvalidChannelState();
-
-        // Execute withdrawal via internal method
-        usdcAmount = _executeWithdrawInternal(payrollId);
-
-        // Record settlement in state manager
-        stateManager.recordChannelSettlement(channelId, payrollId, usdcAmount);
-
-        // Bridge via Circle Gateway
-        usdc.approve(address(gatewayWallet), usdcAmount);
-        gatewayWallet.deposit(address(usdc), usdcAmount);
-
-        emit ChannelSettled(payrollId, channelId, usdcAmount);
-    }
-
-    /// @notice Get execution mode info for a payroll
-    /// @param payrollId Payroll to query
-    /// @return channelId Associated channel (0x0 if none)
-    /// @return isChannelSettled Whether channel is settled
-    function getChannelInfo(uint256 payrollId) external view returns (bytes32 channelId, bool isChannelSettled) {
-        channelId = stateManager.getPayrollChannel(payrollId);
-        if (channelId != bytes32(0)) {
-            ArcFlowStateManager.ChannelSettlement memory settlement = stateManager.getChannelSettlement(channelId);
-            isChannelSettled = settlement.settledAt > 0;
-        }
+        amt = _withdraw(pid);
+        stateManager.recordChannelSettlement(cid, pid, amt);
+        usdc.approve(address(gatewayWallet), amt);
+        gatewayWallet.deposit(address(usdc), amt);
+        emit ChannelSettled(pid, cid, amt);
     }
 }

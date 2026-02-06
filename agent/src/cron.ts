@@ -501,7 +501,7 @@ export class PayrollCron {
           const activePayrollIds = await client.readContract({
             address: chainConfig.router,
             abi: ROUTER_ABI,
-            functionName: "getActivePayrollIds",
+            functionName: "getActiveIds",
           }) as bigint[];
 
           if (activePayrollIds.length === 0) {

@@ -10,10 +10,10 @@ import {IGatewayWallet, IGatewayMinter} from "./interfaces/ICircleGateway.sol";
 import {MigrationStatus} from "./structs/CrossChainStructs.sol";
 
 interface IArcFlowRouter {
-    function removeLiquidityFor(uint256 payrollId) external returns (uint256 usdcAmount);
-    function addLiquidityFor(uint256 payrollId, uint256 amount) external returns (uint128);
-    function updatePositionChain(uint256 payrollId, uint256 targetChainId) external;
-    function getPositionData(uint256 payrollId) external view returns (uint128 liquidity, uint256 currentChainId, uint256 payrollDate);
+    function removeLiqFor(uint256 pid) external returns (uint256);
+    function addLiqFor(uint256 pid, uint256 amt) external returns (uint128);
+    function updatePosChain(uint256 pid, uint256 cid) external;
+    function getPosData(uint256 pid) external view returns (uint128, uint256, uint256);
 }
 
 /// @title ArcFlow Migration Extension
@@ -86,14 +86,14 @@ contract ArcFlowMigration {
         address signer = ethSignedHash.recover(channelSignature);
         if (signer != agent && signer != owner) revert InvalidChannelSignature();
 
-        (uint128 liquidity, uint256 currentChain, uint256 payrollDate) = router.getPositionData(payrollId);
+        (uint128 liquidity, uint256 currentChain, uint256 payrollDate) = router.getPosData(payrollId);
         if (liquidity == 0) revert NoPosition();
         if (currentChain != chainId) revert WrongChain();
         if (targetChainId == chainId) revert SameChain();
         if (!stateManager.isMigrationValid(payrollDate)) revert TooCloseToPayroll();
 
-        amount = router.removeLiquidityFor(payrollId);
-        router.updatePositionChain(payrollId, targetChainId);
+        amount = router.removeLiqFor(payrollId);
+        router.updatePosChain(payrollId, targetChainId);
 
         // Record channel settlement
         stateManager.recordChannelSettlement(channelId, payrollId, amount);
@@ -128,14 +128,14 @@ contract ArcFlowMigration {
         address signer = ethSignedHash.recover(channelSignature);
         if (signer != agent && signer != owner) revert InvalidChannelSignature();
 
-        (uint128 liquidity, uint256 currentChain, ) = router.getPositionData(payrollId);
+        (uint128 liquidity, uint256 currentChain, ) = router.getPosData(payrollId);
         if (currentChain != chainId) revert WrongChain();
         if (liquidity != 0) revert HasLiquidity();
 
         gatewayMinter.gatewayMint(attestation, gatewaySignature);
         usdc.safeTransfer(address(router), amount);
 
-        newLiquidity = router.addLiquidityFor(payrollId, amount);
+        newLiquidity = router.addLiqFor(payrollId, amount);
 
         // Record channel settlement
         stateManager.recordChannelSettlement(channelId, payrollId, amount);
@@ -145,7 +145,7 @@ contract ArcFlowMigration {
     }
 
     function shouldMigrate(uint256 payrollId) external view returns (bool migrate, uint256 targetChain, uint256 apyDiff) {
-        (uint128 liquidity, uint256 currentChain, uint256 payrollDate) = router.getPositionData(payrollId);
+        (uint128 liquidity, uint256 currentChain, uint256 payrollDate) = router.getPosData(payrollId);
         if (currentChain != chainId || liquidity == 0 || !stateManager.isMigrationValid(payrollDate)) {
             return (false, 0, 0);
         }

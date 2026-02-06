@@ -29,7 +29,7 @@
       "outputs": [{ "name": "", "type": "uint256[]" }]
     },
     {
-      "name": "getActivePayrollIds",
+      "name": "getActiveIds",
       "type": "function",
       "stateMutability": "view",
       "inputs": [],
@@ -43,20 +43,10 @@
       "outputs": [{ "name": "", "type": "bool" }]
     },
     {
-      "name": "executeReadyPayrolls",
-      "type": "function",
-      "stateMutability": "nonpayable",
-      "inputs": [],
-      "outputs": [
-        { "name": "executed", "type": "uint256" },
-        { "name": "totalBridged", "type": "uint256" }
-      ]
-    },
-    {
-      "name": "getPosition",
+      "name": "getPos",
       "type": "function",
       "stateMutability": "view",
-      "inputs": [{ "name": "payrollId", "type": "uint256" }],
+      "inputs": [{ "name": "pid", "type": "uint256" }],
       "outputs": [
         {
           "name": "",
@@ -79,51 +69,22 @@
       ]
     },
     {
-      "name": "getProviderPositions",
+      "name": "getProviderPayrolls",
       "type": "function",
       "stateMutability": "view",
-      "inputs": [{ "name": "provider", "type": "address" }],
-      "outputs": [
-        {
-          "name": "",
-          "type": "tuple[]",
-          "components": [
-            { "name": "payrollId", "type": "uint256" },
-            { "name": "provider", "type": "address" },
-            { "name": "liquidity", "type": "uint128" },
-            { "name": "usdcDeposited", "type": "uint256" },
-            { "name": "depositTime", "type": "uint256" },
-            { "name": "payrollDate", "type": "uint256" },
-            { "name": "payrollStateHash", "type": "bytes32" },
-            { "name": "accumulatedYield", "type": "uint256" },
-            { "name": "sourceChainId", "type": "uint256" },
-            { "name": "currentChainId", "type": "uint256" },
-            { "name": "migrationCount", "type": "uint256" },
-            { "name": "recipientsHash", "type": "bytes32" }
-          ]
-        }
-      ]
+      "inputs": [{ "name": "p", "type": "address" }],
+      "outputs": [{ "name": "", "type": "uint256[]" }]
     },
     {
-      "name": "settleFromChannel",
+      "name": "settle",
       "type": "function",
       "stateMutability": "nonpayable",
       "inputs": [
-        { "name": "payrollId", "type": "uint256" },
-        { "name": "channelId", "type": "bytes32" },
-        { "name": "stateSignature", "type": "bytes" }
+        { "name": "pid", "type": "uint256" },
+        { "name": "cid", "type": "bytes32" },
+        { "name": "sig", "type": "bytes" }
       ],
-      "outputs": [{ "name": "usdcAmount", "type": "uint256" }]
-    },
-    {
-      "name": "getChannelInfo",
-      "type": "function",
-      "stateMutability": "view",
-      "inputs": [{ "name": "payrollId", "type": "uint256" }],
-      "outputs": [
-        { "name": "channelId", "type": "bytes32" },
-        { "name": "isChannelSettled", "type": "bool" }
-      ]
+      "outputs": [{ "name": "amt", "type": "uint256" }]
     }
   ],
   "stateManager": [
@@ -201,7 +162,6 @@
       "type": "function",
       "stateMutability": "view",
       "inputs": [
-        { "name": "channelId", "type": "bytes32" },
         { "name": "stateHash", "type": "bytes32" },
         { "name": "signature", "type": "bytes" }
       ],
@@ -257,25 +217,29 @@
       ]
     },
     {
-      "name": "migrateOut",
+      "name": "migrateOutViaChannel",
       "type": "function",
       "stateMutability": "nonpayable",
       "inputs": [
         { "name": "payrollId", "type": "uint256" },
-        { "name": "targetChainId", "type": "uint256" }
+        { "name": "targetChainId", "type": "uint256" },
+        { "name": "channelId", "type": "bytes32" },
+        { "name": "channelSignature", "type": "bytes" }
       ],
       "outputs": [{ "name": "amount", "type": "uint256" }]
     },
     {
-      "name": "migrateIn",
+      "name": "migrateInViaChannel",
       "type": "function",
       "stateMutability": "nonpayable",
       "inputs": [
         { "name": "payrollId", "type": "uint256" },
         { "name": "fromChainId", "type": "uint256" },
         { "name": "amount", "type": "uint256" },
+        { "name": "channelId", "type": "bytes32" },
+        { "name": "channelSignature", "type": "bytes" },
         { "name": "attestation", "type": "bytes" },
-        { "name": "signature", "type": "bytes" }
+        { "name": "gatewaySignature", "type": "bytes" }
       ],
       "outputs": [{ "name": "newLiquidity", "type": "uint128" }]
     }

@@ -13,7 +13,7 @@ import {IPermit2} from "permit2/src/interfaces/IPermit2.sol";
 import {IUniswapV4Router04} from "hookmate/interfaces/router/IUniswapV4Router04.sol";
 import {AddressConstants} from "hookmate/constants/AddressConstants.sol";
 
-import {Deployers} from "test/utils/Deployers.sol";
+import {Deployers} from "../../test/utils/Deployers.sol";
 
 /// @notice Shared configuration between scripts
 contract BaseScript is Script, Deployers {
@@ -60,14 +60,14 @@ contract BaseScript is Script, Deployers {
     function getCurrencies() internal pure returns (Currency, Currency) {
         require(address(token0) != address(token1));
 
-        if (token0 < token1) {
+        if (address(token0) < address(token1)) {
             return (Currency.wrap(address(token0)), Currency.wrap(address(token1)));
         } else {
             return (Currency.wrap(address(token1)), Currency.wrap(address(token0)));
         }
     }
 
-    function getDeployer() internal returns (address) {
+    function getDeployer() internal view returns (address) {
         address[] memory wallets = vm.getWallets();
 
         if (wallets.length > 0) {

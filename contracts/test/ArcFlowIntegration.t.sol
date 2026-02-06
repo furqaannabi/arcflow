@@ -10,6 +10,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 import {ArcFlowRouter} from "../src/ArcFlowRouter.sol";
 import {ArcFlowStateManager} from "../src/ArcFlowStateManager.sol";
@@ -48,6 +49,7 @@ contract MockGatewayMinter {
 
 contract ArcFlowIntegrationTest is Test, Deployers {
     using PoolIdLibrary for PoolKey;
+    using MessageHashUtils for bytes32;
 
     ArcFlowRouter router;
     ArcFlowStateManager stateManager;
@@ -58,7 +60,8 @@ contract ArcFlowIntegrationTest is Test, Deployers {
     MockERC20 usdc;
     MockERC20 usdt;
 
-    address agent = address(0xA6E47);
+    uint256 agentPrivateKey = 0xA6E47;
+    address agent;
     address employer = address(0xE43107E8);
 
     PoolKey poolKey;
@@ -68,6 +71,7 @@ contract ArcFlowIntegrationTest is Test, Deployers {
     uint32 constant CIRCLE_DOMAIN = 0;
 
     function setUp() public {
+        agent = vm.addr(agentPrivateKey);
         deployFreshManagerAndRouters();
 
         usdc = new MockERC20("USD Coin", "USDC", 6);
@@ -109,7 +113,7 @@ contract ArcFlowIntegrationTest is Test, Deployers {
         );
 
         router.setAgent(agent);
-        router.setMigrationContract(address(migration));
+        router.setMigration(address(migration));
         migration.setAgent(agent);
         migration.setGatewayMinter(address(gatewayMinter));
 
@@ -147,6 +151,14 @@ contract ArcFlowIntegrationTest is Test, Deployers {
         );
     }
 
+    /// @notice Helper to create a signed channel state for testing
+    function _signChannelState(bytes32 channelId, uint256 payrollId, uint256 amount) internal view returns (bytes memory) {
+        bytes32 stateHash = keccak256(abi.encodePacked(channelId, payrollId, amount));
+        bytes32 ethSignedHash = stateHash.toEthSignedMessageHash();
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(agentPrivateKey, ethSignedHash);
+        return abi.encodePacked(r, s, v);
+    }
+
     function test_DepositFlow() public {
         uint256 depositAmount = 10_000e6;
         uint256 payrollDate = block.timestamp + 30 days;
@@ -160,57 +172,90 @@ contract ArcFlowIntegrationTest is Test, Deployers {
         assertTrue(payrollId > 0, "Should receive payroll ID");
         assertTrue(liquidity > 0, "Should receive liquidity");
 
-        LPPosition memory pos = router.getPosition(payrollId);
+        LPPosition memory pos = router.getPos(payrollId);
         assertEq(pos.payrollId, payrollId);
         assertEq(pos.liquidity, liquidity);
         assertEq(pos.provider, employer);
     }
 
-    function test_CannotWithdrawEarly() public {
+    function test_CannotSettleEarly() public {
         uint256 payrollDate = block.timestamp + 30 days;
+        uint256 depositAmount = 10_000e6;
 
         PayrollRecipient[] memory recipients = new PayrollRecipient[](1);
-        recipients[0] = PayrollRecipient({wallet: address(0x1), amount: 10_000e6});
+        recipients[0] = PayrollRecipient({wallet: address(0x1), amount: depositAmount});
 
         vm.prank(employer);
-        (uint256 payrollId, ) = router.deposit(10_000e6, payrollDate, recipients);
+        (uint256 payrollId, ) = router.deposit(depositAmount, payrollDate, recipients);
+
+        bytes32 channelId = keccak256(abi.encodePacked("channel", payrollId));
+        bytes memory signature = _signChannelState(channelId, payrollId, depositAmount);
 
         vm.prank(agent);
         vm.expectRevert(ArcFlowRouter.NotReady.selector);
-        router.withdraw(payrollId);
+        router.settle(payrollId, channelId, signature);
     }
 
-    function test_WithdrawAfterPayrollDate() public {
+    function test_SettleAfterPayrollDate() public {
         uint256 payrollDate = block.timestamp + 30 days;
+        uint256 depositAmount = 10_000e6;
 
         PayrollRecipient[] memory recipients = new PayrollRecipient[](1);
-        recipients[0] = PayrollRecipient({wallet: address(0x1), amount: 10_000e6});
+        recipients[0] = PayrollRecipient({wallet: address(0x1), amount: depositAmount});
 
         vm.prank(employer);
-        (uint256 payrollId, ) = router.deposit(10_000e6, payrollDate, recipients);
+        (uint256 payrollId, ) = router.deposit(depositAmount, payrollDate, recipients);
 
         vm.warp(payrollDate + 1);
 
+        bytes32 channelId = keccak256(abi.encodePacked("channel", payrollId));
+        bytes memory signature = _signChannelState(channelId, payrollId, depositAmount);
+
         vm.prank(agent);
-        uint256 usdcBridged = router.withdraw(payrollId);
+        uint256 usdcBridged = router.settle(payrollId, channelId, signature);
 
         assertTrue(usdcBridged > 0, "Should bridge USDC");
     }
 
-    function test_OnlyAgentCanWithdraw() public {
+    function test_OnlyAgentCanSettle() public {
         uint256 payrollDate = block.timestamp + 1;
+        uint256 depositAmount = 10_000e6;
 
         PayrollRecipient[] memory recipients = new PayrollRecipient[](1);
-        recipients[0] = PayrollRecipient({wallet: address(0x1), amount: 10_000e6});
+        recipients[0] = PayrollRecipient({wallet: address(0x1), amount: depositAmount});
 
         vm.prank(employer);
-        (uint256 payrollId, ) = router.deposit(10_000e6, payrollDate, recipients);
+        (uint256 payrollId, ) = router.deposit(depositAmount, payrollDate, recipients);
 
         vm.warp(payrollDate + 1);
 
+        bytes32 channelId = keccak256(abi.encodePacked("channel", payrollId));
+        bytes memory signature = _signChannelState(channelId, payrollId, depositAmount);
+
         vm.prank(employer);
         vm.expectRevert("Unauth");
-        router.withdraw(payrollId);
+        router.settle(payrollId, channelId, signature);
+    }
+
+    function test_InvalidChannelSignatureReverts() public {
+        uint256 payrollDate = block.timestamp + 1;
+        uint256 depositAmount = 10_000e6;
+
+        PayrollRecipient[] memory recipients = new PayrollRecipient[](1);
+        recipients[0] = PayrollRecipient({wallet: address(0x1), amount: depositAmount});
+
+        vm.prank(employer);
+        (uint256 payrollId, ) = router.deposit(depositAmount, payrollDate, recipients);
+
+        vm.warp(payrollDate + 1);
+
+        bytes32 channelId = keccak256(abi.encodePacked("channel", payrollId));
+        // Sign with wrong amount to create invalid signature
+        bytes memory badSignature = _signChannelState(channelId, payrollId, depositAmount + 1);
+
+        vm.prank(agent);
+        vm.expectRevert(ArcFlowRouter.InvalidChannelState.selector);
+        router.settle(payrollId, channelId, badSignature);
     }
 
     function test_GetReadyPayrolls() public {
@@ -238,24 +283,40 @@ contract ArcFlowIntegrationTest is Test, Deployers {
         assertEq(readyIds.length, 2, "Both payrolls ready");
     }
 
-    function test_ExecuteReadyPayrolls() public {
+    function test_SettleMultiplePayrolls() public {
         uint256 payrollDate = block.timestamp + 10 days;
+        uint256 depositAmount = 5_000e6;
 
         PayrollRecipient[] memory recipients = new PayrollRecipient[](1);
-        recipients[0] = PayrollRecipient({wallet: address(0x1), amount: 5_000e6});
+        recipients[0] = PayrollRecipient({wallet: address(0x1), amount: depositAmount});
 
         vm.startPrank(employer);
-        router.deposit(5_000e6, payrollDate, recipients);
-        router.deposit(5_000e6, payrollDate, recipients);
+        (uint256 payrollId1, ) = router.deposit(depositAmount, payrollDate, recipients);
+        (uint256 payrollId2, ) = router.deposit(depositAmount, payrollDate, recipients);
         vm.stopPrank();
 
         vm.warp(payrollDate + 1);
 
+        // Settle first payroll
+        bytes32 channelId1 = keccak256(abi.encodePacked("channel", payrollId1));
+        bytes memory sig1 = _signChannelState(channelId1, payrollId1, depositAmount);
         vm.prank(agent);
-        (uint256 executed, uint256 totalBridged) = router.executeReadyPayrolls();
+        uint256 bridged1 = router.settle(payrollId1, channelId1, sig1);
 
-        assertEq(executed, 2, "Should execute 2 payrolls");
-        assertTrue(totalBridged > 0, "Should bridge USDC");
+        // Settle second payroll
+        bytes32 channelId2 = keccak256(abi.encodePacked("channel", payrollId2));
+        bytes memory sig2 = _signChannelState(channelId2, payrollId2, depositAmount);
+        vm.prank(agent);
+        uint256 bridged2 = router.settle(payrollId2, channelId2, sig2);
+
+        assertTrue(bridged1 > 0, "Should bridge first payroll");
+        assertTrue(bridged2 > 0, "Should bridge second payroll");
+
+        // Verify positions are deleted
+        LPPosition memory pos1 = router.getPos(payrollId1);
+        LPPosition memory pos2 = router.getPos(payrollId2);
+        assertEq(pos1.liquidity, 0, "First position should be deleted");
+        assertEq(pos2.liquidity, 0, "Second position should be deleted");
     }
 
     function test_StateManagerApyTracking() public {

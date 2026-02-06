@@ -69,23 +69,35 @@ export class ContractService {
   }
 
   async getPositions(provider: Address): Promise<LPPosition[]> {
-    const positions = await this.client.readContract({
+    // Get payroll IDs for provider
+    const payrollIds = await this.client.readContract({
       address: ADDRESSES.router,
       abi: ROUTER_ABI,
-      functionName: "getProviderPositions",
+      functionName: "getProviderPayrolls",
       args: [provider],
-    }) as any[];
+    }) as bigint[];
 
-    return positions.map((p) => ({
-      payrollId: p.payrollId,
-      provider: p.provider,
-      liquidity: p.liquidity,
-      usdcDeposited: p.usdcDeposited,
-      depositTime: p.depositTime,
-      payrollDate: p.payrollDate,
-      accumulatedYield: p.accumulatedYield,
-      currentChainId: p.currentChainId,
-    }));
+    // Fetch each position
+    const positions: LPPosition[] = [];
+    for (const pid of payrollIds) {
+      const p = await this.client.readContract({
+        address: ADDRESSES.router,
+        abi: ROUTER_ABI,
+        functionName: "getPos",
+        args: [pid],
+      }) as any;
+      positions.push({
+        payrollId: p.payrollId,
+        provider: p.provider,
+        liquidity: p.liquidity,
+        usdcDeposited: p.usdcDeposited,
+        depositTime: p.depositTime,
+        payrollDate: p.payrollDate,
+        accumulatedYield: p.accumulatedYield,
+        currentChainId: p.currentChainId,
+      });
+    }
+    return positions;
   }
 
   // Generate calldata for approval transaction
@@ -155,14 +167,14 @@ export class ContractService {
     const ids = await this.client.readContract({
       address: ADDRESSES.router,
       abi: ROUTER_ABI,
-      functionName: "getActivePayrollIds",
+      functionName: "getActiveIds",
       args: [],
     });
     return ids as bigint[];
   }
 
-  // Generate calldata for executing ready payrolls
-  generateExecuteReadyPayrollsCalldata(): {
+  // Generate calldata for settling via Yellow channel
+  generateSettleCalldata(payrollId: bigint, channelId: `0x${string}`, signature: `0x${string}`): {
     to: Address;
     data: string;
   } {
@@ -171,8 +183,8 @@ export class ContractService {
       to: ADDRESSES.router,
       data: encodeFunctionData({
         abi: ROUTER_ABI,
-        functionName: "executeReadyPayrolls",
-        args: [],
+        functionName: "settle",
+        args: [payrollId, channelId, signature],
       }),
     };
   }
