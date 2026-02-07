@@ -329,8 +329,25 @@ async function executeTool(
           /(\d{1,2})(?:st|nd|rd|th)?\s*(january|february|march|april|may|june|july|august|september|october|november|december)\s*(\d{4})?/i
         );
         const timeMatch = dateStr.match(
-          /(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?\s*(utc|gmt)?/i
+          /(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?\s*(utc|gmt|ist|est|cst|mst|pst|cet|eet|jst|kst|aest|sgt|hkt)/i
         );
+
+        // Timezone offsets in minutes from UTC
+        const TZ_OFFSETS: Record<string, number> = {
+          utc: 0, gmt: 0,
+          ist: 330,   // India Standard Time UTC+5:30
+          est: -300,  // Eastern Standard Time UTC-5
+          cst: -360,  // Central Standard Time UTC-6
+          mst: -420,  // Mountain Standard Time UTC-7
+          pst: -480,  // Pacific Standard Time UTC-8
+          cet: 60,    // Central European Time UTC+1
+          eet: 120,   // Eastern European Time UTC+2
+          jst: 540,   // Japan Standard Time UTC+9
+          kst: 540,   // Korea Standard Time UTC+9
+          aest: 600,  // Australian Eastern Standard Time UTC+10
+          sgt: 480,   // Singapore Time UTC+8
+          hkt: 480,   // Hong Kong Time UTC+8
+        };
 
         if (monthMatch) {
           const day = parseInt(monthMatch[1]);
@@ -342,15 +359,20 @@ async function executeTool(
           const year = monthMatch[3] ? parseInt(monthMatch[3]) : now.getFullYear();
 
           let hours = 0, minutes = 0, seconds = 0;
+          let tzOffsetMinutes = 0; // default to UTC
           if (timeMatch) {
             hours = parseInt(timeMatch[1]);
             minutes = parseInt(timeMatch[2]);
             seconds = timeMatch[3] ? parseInt(timeMatch[3]) : 0;
             if (timeMatch[4]?.toLowerCase() === "pm" && hours < 12) hours += 12;
             if (timeMatch[4]?.toLowerCase() === "am" && hours === 12) hours = 0;
+            if (timeMatch[5]) {
+              tzOffsetMinutes = TZ_OFFSETS[timeMatch[5].toLowerCase()] ?? 0;
+            }
           }
 
-          parsedDate = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
+          // Create date in UTC by subtracting the timezone offset
+          parsedDate = new Date(Date.UTC(year, month, day, hours, minutes - tzOffsetMinutes, seconds));
         } else {
           return { result: JSON.stringify({ error: "Could not parse date/time: " + dateStr + ". Please provide a full date and time (e.g., '15th June 2025 at 2:30 PM UTC' or '2025-06-15T14:30:00Z')." }), updatedPayroll: updated };
         }
@@ -899,13 +921,27 @@ function toOpenAIMessages(messages: IMessage[]): OpenAI.Chat.ChatCompletionMessa
   });
 }
 
+// SSE helper: send an event to the client
+function sendSSE(res: Response, event: string, data: unknown) {
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
 router.post("/chat", upload.single("file"), async (req: Request, res: Response) => {
+  // Set SSE headers
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+
   try {
     const { message, sessionId: providedSessionId, userAddress } = req.body;
     const file = req.file;
 
     if (!message && !file) {
-      return res.status(400).json({ error: "Message or file is required" });
+      sendSSE(res, "error", { error: "Message or file is required" });
+      res.end();
+      return;
     }
 
     // Get or create session
@@ -913,7 +949,6 @@ router.post("/chat", upload.single("file"), async (req: Request, res: Response) 
     let session = sessionId ? await ChatSession.findOne({ sessionId }) : null;
 
     if (!session) {
-      // Create new session
       sessionId = uuidv4();
       session = new ChatSession({
         sessionId,
@@ -924,44 +959,42 @@ router.post("/chat", upload.single("file"), async (req: Request, res: Response) 
       await session.save();
     }
 
+    sendSSE(res, "session", { sessionId });
+
     // Check if file upload is allowed
     if (file) {
       const lastMessage = session.messages[session.messages.length - 1];
       if (!lastMessage?.allowFileUpload) {
-        return res.status(400).json({ error: "File upload not allowed at this point" });
+        sendSSE(res, "error", { error: "File upload not allowed at this point" });
+        res.end();
+        return;
       }
     }
 
     // Prepare user message content
     let userContent = message || "";
     if (file) {
-      // Parse CSV file and append to message
       const csvData = file.buffer.toString("utf-8");
       userContent = userContent
         ? `${userContent}\n\nCSV File (${file.originalname}):\n${csvData}`
         : `Please parse this CSV file:\n${csvData}`;
     }
 
-    // Add user message
     session.messages.push({
       role: "user",
       content: userContent,
       timestamp: new Date(),
     });
 
-    // Store user address if provided
     if (userAddress) {
       session.pendingPayroll.userAddress = userAddress;
     }
 
-    // Convert to OpenAI format
     let messages = toOpenAIMessages(session.messages);
-    // Convert Mongoose subdocument to plain object so spread operator works in executeTool
     let pendingPayroll: IPendingPayroll = session.pendingPayroll
       ? JSON.parse(JSON.stringify(session.pendingPayroll))
       : {};
 
-    // Track transaction data from tool calls
     const transactions: Array<{ type: string; to: string; data: string; description: string; [key: string]: any }> = [];
     const TX_TOOLS = new Set([
       "get_approval_transaction",
@@ -970,23 +1003,40 @@ router.post("/chat", upload.single("file"), async (req: Request, res: Response) 
       "get_execute_payrolls_transaction",
     ]);
 
-    // Call OpenAI with tools
-    let response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages,
-      tools,
-      tool_choice: "auto",
-    });
+    // Tool call loop (non-streaming — tools need full response)
+    let keepLooping = true;
+    while (keepLooping) {
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages,
+        tools,
+        tool_choice: "auto",
+      });
 
-    let assistantMessage = response.choices[0].message;
+      const msg = response.choices[0].message;
 
-    // Handle tool calls
-    while (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
-      // Add assistant message with tool calls
+      if (!msg.tool_calls || msg.tool_calls.length === 0) {
+        // No more tool calls — break and stream the final response
+        // Save the non-streaming content in case we need it
+        if (msg.content) {
+          session.messages.push({
+            role: "assistant",
+            content: msg.content,
+            tool_calls: undefined,
+            timestamp: new Date(),
+          });
+        }
+        keepLooping = false;
+        break;
+      }
+
+      // Process tool calls
+      sendSSE(res, "status", { type: "tool_calls", tools: msg.tool_calls.map(tc => tc.function.name) });
+
       session.messages.push({
         role: "assistant",
-        content: assistantMessage.content,
-        tool_calls: assistantMessage.tool_calls.map(tc => ({
+        content: msg.content,
+        tool_calls: msg.tool_calls.map(tc => ({
           id: tc.id,
           type: tc.type,
           function: tc.function,
@@ -994,9 +1044,10 @@ router.post("/chat", upload.single("file"), async (req: Request, res: Response) 
         timestamp: new Date(),
       });
 
-      // Execute each tool call
-      for (const toolCall of assistantMessage.tool_calls) {
+      for (const toolCall of msg.tool_calls) {
         const args = JSON.parse(toolCall.function.arguments);
+        sendSSE(res, "tool_start", { name: toolCall.function.name });
+
         const { result, updatedPayroll } = await executeTool(
           toolCall.function.name,
           args,
@@ -1004,7 +1055,6 @@ router.post("/chat", upload.single("file"), async (req: Request, res: Response) 
         );
         pendingPayroll = updatedPayroll;
 
-        // Capture transaction data for the response
         if (TX_TOOLS.has(toolCall.function.name)) {
           try {
             const parsed = JSON.parse(result);
@@ -1014,6 +1064,8 @@ router.post("/chat", upload.single("file"), async (req: Request, res: Response) 
           } catch {}
         }
 
+        sendSSE(res, "tool_done", { name: toolCall.function.name });
+
         session.messages.push({
           role: "tool",
           tool_call_id: toolCall.id,
@@ -1022,43 +1074,58 @@ router.post("/chat", upload.single("file"), async (req: Request, res: Response) 
         });
       }
 
-      // Update messages for next call
       messages = toOpenAIMessages(session.messages);
+    }
 
-      // Get next response
-      response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages,
-        tools,
-        tool_choice: "auto",
-      });
+    // Stream the final assistant response token by token
+    sendSSE(res, "status", { type: "streaming" });
 
-      assistantMessage = response.choices[0].message;
+    const stream = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: toOpenAIMessages(session.messages),
+      tools,
+      tool_choice: "none", // force text response, no more tool calls
+      stream: true,
+    });
+
+    let fullContent = "";
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta?.content;
+      if (delta) {
+        fullContent += delta;
+        sendSSE(res, "token", { content: delta });
+      }
     }
 
     // Check if assistant is asking for CSV/file upload
-    const contentLower = (assistantMessage.content || "").toLowerCase();
+    const contentLower = fullContent.toLowerCase();
     const allowFileUpload = contentLower.includes("csv") ||
       contentLower.includes("upload") ||
       contentLower.includes("file") ||
       contentLower.includes("employee data") ||
       contentLower.includes("recipient");
 
-    // Add final assistant message
-    session.messages.push({
-      role: "assistant",
-      content: assistantMessage.content,
-      timestamp: new Date(),
-      allowFileUpload,
-    });
+    // Replace the last message (from non-streaming break) with streamed content
+    const lastMsg = session.messages[session.messages.length - 1];
+    if (lastMsg?.role === "assistant") {
+      lastMsg.content = fullContent;
+      lastMsg.allowFileUpload = allowFileUpload;
+    } else {
+      session.messages.push({
+        role: "assistant",
+        content: fullContent,
+        timestamp: new Date(),
+        allowFileUpload,
+      });
+    }
 
-    // Update session
+    // Save session
     session.pendingPayroll = pendingPayroll;
     session.lastActivity = new Date();
     await session.save();
 
-    res.json({
-      response: assistantMessage.content,
+    // Send final done event with metadata
+    sendSSE(res, "done", {
       sessionId,
       allowFileUpload,
       transactions: transactions.length > 0 ? transactions : undefined,
@@ -1074,9 +1141,12 @@ router.post("/chat", upload.single("file"), async (req: Request, res: Response) 
           }
         : null,
     });
+
+    res.end();
   } catch (error) {
     console.error("Chat error:", error);
-    res.status(500).json({ error: "Failed to process chat message" });
+    sendSSE(res, "error", { error: "Failed to process chat message" });
+    res.end();
   }
 });
 
