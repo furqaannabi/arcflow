@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Bot, FileText, X, Sparkles, TrendingUp, Users, Menu } from "lucide-react";
+import { Send, Bot, FileText, X, Sparkles, TrendingUp, Users, Menu, Receipt } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import ChatMessage from "@/components/chat/ChatMessage";
 import CSVUpload from "@/components/chat/CSVUpload";
 import Sidebar from "@/components/Sidebar";
 import ConnectButton from "@/components/ConnectButton";
+import PayrollsPanel from "@/components/PayrollsPanel";
 
 // Define message type locally matching what ChatMessage expects
 interface Message {
@@ -71,6 +72,7 @@ export default function AgentChat() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [payrollsPanelOpen, setPayrollsPanelOpen] = useState(false);
   // Backend session ID for API calls
   const [sessionId, setSessionId] = useState<string | null>(null);
   // Frontend session ID for localStorage persistence
@@ -367,6 +369,13 @@ export default function AgentChat() {
           </div>
           
           <div className="flex items-center gap-4">
+            <button
+              onClick={() => setPayrollsPanelOpen(!payrollsPanelOpen)}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-accent transition-colors"
+            >
+              <Receipt className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+              <span className="hidden md:inline text-sm font-medium text-gray-700 dark:text-gray-300">Payrolls</span>
+            </button>
             <ConnectButton />
           </div>
         </header>
