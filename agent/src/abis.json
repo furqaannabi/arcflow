@@ -41,8 +41,7 @@
       "stateMutability": "view",
       "inputs": [{ "name": "payrollId", "type": "uint256" }],
       "outputs": [{ "name": "", "type": "bool" }]
-    },
-    {
+    },{
       "name": "getPos",
       "type": "function",
       "stateMutability": "view",
@@ -56,6 +55,16 @@
             { "name": "provider", "type": "address" },
             { "name": "liquidity", "type": "uint128" },
             { "name": "usdcDeposited", "type": "uint256" },
+    
+            {
+              "name": "recipients",
+              "type": "tuple[]",
+              "components": [
+                { "name": "wallet", "type": "address" },
+                { "name": "amount", "type": "uint256" }
+              ]
+            },
+    
             { "name": "depositTime", "type": "uint256" },
             { "name": "payrollDate", "type": "uint256" },
             { "name": "payrollStateHash", "type": "bytes32" },

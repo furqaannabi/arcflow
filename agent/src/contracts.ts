@@ -1,6 +1,5 @@
 import {
   createPublicClient,
-  createWalletClient,
   http,
   parseUnits,
   formatUnits,
@@ -26,13 +25,11 @@ const ADDRESSES = {
   usdt: addressesJson.baseSepolia.usdt as Address,
 };
 
-// Pool key params (must match deployment: fee=500, tickSpacing=10, no hooks)
 const POOL_FEE = 500;
 const POOL_TICK_SPACING = 10;
 const POOL_HOOKS = "0x0000000000000000000000000000000000000000" as Address;
 
-// Uniswap V4 StateLibrary constants
-const POOLS_SLOT = pad(toHex(6), { size: 32 }) as Hex; // mapping slot in PoolManager
+const POOLS_SLOT = pad(toHex(6), { size: 32 }) as Hex;
 const LIQUIDITY_OFFSET = 3n;
 
 const EXTSLOAD_ABI = [
@@ -57,6 +54,7 @@ export interface PayrollRecipient {
 export interface LPPosition {
   payrollId: bigint;
   provider: Address;
+  recipients: PayrollRecipient[];
   liquidity: bigint;
   usdcDeposited: bigint;
   depositTime: bigint;
@@ -75,12 +73,7 @@ export class ContractService {
     });
   }
 
-  async getTransactionReceipt(txHash: `0x${string}`): Promise<{
-    status: "success" | "reverted";
-    blockNumber: bigint;
-    gasUsed: bigint;
-    to: Address | null;
-  } | null> {
+  async getTransactionReceipt(txHash: `0x${string}`) {
     try {
       const receipt = await this.client.getTransactionReceipt({ hash: txHash });
       return {
@@ -114,8 +107,29 @@ export class ContractService {
     return formatUnits(allowance as bigint, 6);
   }
 
+  async getPos(payrollId: bigint): Promise<LPPosition> {
+    const p = await this.client.readContract({
+      address: ADDRESSES.router,
+      abi: ROUTER_ABI,
+      functionName: "getPos",
+      args: [payrollId],
+    }) as any;
+  
+    return {
+      payrollId: p.payrollId,
+      provider: p.provider,
+      recipients: p.recipients,
+      liquidity: p.liquidity,
+      usdcDeposited: p.usdcDeposited,
+      depositTime: p.depositTime,
+      payrollDate: p.payrollDate,
+      accumulatedYield: p.accumulatedYield,
+      currentChainId: p.currentChainId,
+    };
+  }
+  
+
   async getPositions(provider: Address): Promise<LPPosition[]> {
-    // Get payroll IDs for provider
     const payrollIds = await this.client.readContract({
       address: ADDRESSES.router,
       abi: ROUTER_ABI,
@@ -123,8 +137,8 @@ export class ContractService {
       args: [provider],
     }) as bigint[];
 
-    // Fetch each position
     const positions: LPPosition[] = [];
+
     for (const pid of payrollIds) {
       const p = await this.client.readContract({
         address: ADDRESSES.router,
@@ -132,9 +146,11 @@ export class ContractService {
         functionName: "getPos",
         args: [pid],
       }) as any;
+
       positions.push({
         payrollId: p.payrollId,
         provider: p.provider,
+        recipients: p.recipients,
         liquidity: p.liquidity,
         usdcDeposited: p.usdcDeposited,
         depositTime: p.depositTime,
@@ -143,14 +159,11 @@ export class ContractService {
         currentChainId: p.currentChainId,
       });
     }
+
     return positions;
   }
 
-  // Generate calldata for approval transaction
-  generateApprovalCalldata(amount: bigint): {
-    to: Address;
-    data: string;
-  } {
+  generateApprovalCalldata(amount: bigint) {
     return {
       to: ADDRESSES.usdc,
       data: encodeFunctionData({
@@ -161,15 +174,11 @@ export class ContractService {
     };
   }
 
-  // Generate calldata for deposit transaction
   generateDepositCalldata(
     amount: bigint,
     payrollDate: bigint,
     recipients: PayrollRecipient[]
-  ): {
-    to: Address;
-    data: string;
-  } {
+  ) {
     return {
       to: ADDRESSES.router,
       data: encodeFunctionData({
@@ -180,18 +189,12 @@ export class ContractService {
     };
   }
 
-  /**
-   * Read pool liquidity directly from PoolManager via extsload,
-   * matching Uniswap V4 StateLibrary.getLiquidity(poolId).
-   */
   async getPoolLiquidity(): Promise<bigint> {
-    // 1. Sort tokens to get currency0/currency1
     const [currency0, currency1] =
       ADDRESSES.usdc.toLowerCase() < ADDRESSES.usdt.toLowerCase()
         ? [ADDRESSES.usdc, ADDRESSES.usdt]
         : [ADDRESSES.usdt, ADDRESSES.usdc];
 
-    // 2. Compute PoolId = keccak256(abi.encode(PoolKey))
     const poolId = keccak256(
       encodeAbiParameters(
         [
@@ -205,13 +208,15 @@ export class ContractService {
       )
     );
 
-    // 3. Compute pool state slot = keccak256(abi.encodePacked(poolId, POOLS_SLOT))
-    const stateSlot = keccak256(encodePacked(["bytes32", "bytes32"], [poolId, POOLS_SLOT]));
+    const stateSlot = keccak256(
+      encodePacked(["bytes32", "bytes32"], [poolId, POOLS_SLOT])
+    );
 
-    // 4. Liquidity slot = stateSlot + LIQUIDITY_OFFSET
-    const liquiditySlot = toHex(BigInt(stateSlot) + LIQUIDITY_OFFSET, { size: 32 }) as Hex;
+    const liquiditySlot = toHex(
+      BigInt(stateSlot) + LIQUIDITY_OFFSET,
+      { size: 32 }
+    ) as Hex;
 
-    // 5. Read via extsload on PoolManager
     const raw = await this.client.readContract({
       address: ADDRESSES.poolManager,
       abi: EXTSLOAD_ABI,
@@ -219,7 +224,6 @@ export class ContractService {
       args: [liquiditySlot],
     });
 
-    // 6. Decode as uint128 (lower 128 bits)
     return BigInt(raw) & ((1n << 128n) - 1n);
   }
 
@@ -227,29 +231,6 @@ export class ContractService {
     return ADDRESSES;
   }
 
-  // Get payroll IDs that are ready to execute
-  async getReadyPayrolls(): Promise<bigint[]> {
-    const readyIds = await this.client.readContract({
-      address: ADDRESSES.router,
-      abi: ROUTER_ABI,
-      functionName: "getReadyPayrolls",
-      args: [],
-    });
-    return readyIds as bigint[];
-  }
-
-  // Check if a specific payroll is ready
-  async isPayrollReady(payrollId: bigint): Promise<boolean> {
-    const ready = await this.client.readContract({
-      address: ADDRESSES.router,
-      abi: ROUTER_ABI,
-      functionName: "isPayrollReady",
-      args: [payrollId],
-    });
-    return ready as boolean;
-  }
-
-  // Get all active payroll IDs
   async getActivePayrollIds(): Promise<bigint[]> {
     const ids = await this.client.readContract({
       address: ADDRESSES.router,
@@ -260,11 +241,32 @@ export class ContractService {
     return ids as bigint[];
   }
 
-  // Generate calldata for settling via Yellow channel
-  generateSettleCalldata(payrollId: bigint, channelId: `0x${string}`, signature: `0x${string}`): {
-    to: Address;
-    data: string;
-  } {
+  async getReadyPayrolls(): Promise<bigint[]> {
+    const ids = await this.getActivePayrollIds();
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    const ready: bigint[] = [];
+
+    for (const id of ids) {
+      const p = await this.client.readContract({
+        address: ADDRESSES.router,
+        abi: ROUTER_ABI,
+        functionName: "getPos",
+        args: [id],
+      }) as any;
+
+      if (p.payrollDate <= now) {
+        ready.push(id);
+      }
+    }
+
+    return ready;
+  }
+
+  generateSettleCalldata(
+    payrollId: bigint,
+    channelId: `0x${string}`,
+    signature: `0x${string}`
+  ) {
     return {
       to: ADDRESSES.router,
       data: encodeFunctionData({
@@ -275,30 +277,22 @@ export class ContractService {
     };
   }
 
-  // Check if a payroll should migrate to a better yield chain
-  async shouldMigrate(payrollId: bigint): Promise<{
-    migrate: boolean;
-    targetChain: bigint;
-    apyDiff: bigint;
-  }> {
+  async shouldMigrate(payrollId: bigint) {
     const result = await this.client.readContract({
       address: ADDRESSES.migration,
       abi: MIGRATION_ABI,
       functionName: "shouldMigrate",
       args: [payrollId],
     }) as [boolean, bigint, bigint];
-    return { migrate: result[0], targetChain: result[1], apyDiff: result[2] };
+
+    return {
+      migrate: result[0],
+      targetChain: result[1],
+      apyDiff: result[2],
+    };
   }
 
-  // Generate calldata for migrate out
-  generateMigrateOutCalldata(
-    payrollId: bigint,
-    targetChainId: bigint
-  ): {
-    to: Address;
-    data: string;
-  } {
-
+  generateMigrateOutCalldata(payrollId: bigint, targetChainId: bigint) {
     return {
       to: ADDRESSES.migration,
       data: encodeFunctionData({
@@ -309,18 +303,13 @@ export class ContractService {
     };
   }
 
-  // Generate calldata for migrate in
   generateMigrateInCalldata(
     payrollId: bigint,
     fromChainId: bigint,
     amount: bigint,
     attestation: `0x${string}`,
     signature: `0x${string}`
-  ): {
-    to: Address;
-    data: string;
-  } {
-
+  ) {
     return {
       to: ADDRESSES.migration,
       data: encodeFunctionData({
