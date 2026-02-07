@@ -13,6 +13,7 @@ import {
   toBytes,
 } from "viem";
 import { sepolia, baseSepolia } from "viem/chains";
+import { encodePacked } from "viem";
 import { signMessage, privateKeyToAccount } from "viem/accounts";
 import { getRpcUrl, CHAIN_IDS } from "./config";
 import addressesJson from "./addresses.json" with { type: "json" };
@@ -429,24 +430,14 @@ export class YellowChunkingService {
     txHash?: string;
   }> {
     try {
-      // Ensure SDK ready
       if (!this.isSDKReady()) {
-        try {
-          await this.initializeSDK();
-        } catch {
-          console.log("[YELLOW] SDK unavailable, skipping channel execution");
-          return {
-            channelId: "0x0",
-            settled: false,
-          };
-        }
+        await this.initializeSDK();
       }
   
       if (!this.sdkClient) {
         throw new Error("SDK client not available");
       }
   
-      // Fetch position from router
       const pos = await contractService.getPos(payrollId);
   
       const totalAmount = pos.usdcDeposited;
@@ -528,7 +519,7 @@ export class YellowChunkingService {
       );
       throw error;
     }
-  }
+  }  
   
 
   /**
@@ -543,28 +534,30 @@ export class YellowChunkingService {
       console.log("[YELLOW] No private key - cannot sign channel state");
       return null;
     }
-
+  
     try {
-      // Compute channel state hash (must match contract computation)
       const stateHash = keccak256(
-        encodeAbiParameters(
-          parseAbiParameters("bytes32, uint256, uint256"),
+        encodePacked(
+          ["bytes32", "uint256", "uint256"],
           [channelId, payrollId, totalAmount]
         )
       );
-
+  
       const signature = await signMessage({
         message: { raw: toBytes(stateHash) },
         privateKey: this.privateKey as `0x${string}`,
       });
-
-      console.log(`[YELLOW] Channel state signed: ${stateHash.slice(0, 18)}...`);
+  
+      console.log(
+        `[YELLOW] Channel state signed: ${stateHash.slice(0, 18)}...`
+      );
       return signature;
     } catch (error) {
       console.error("[YELLOW] Error signing channel state:", error);
       return null;
     }
   }
+  
 
   async recordChannelSettlementOnChain(
     channelId: `0x${string}`,
@@ -670,15 +663,16 @@ export class YellowChunkingService {
     amount: bigint,
     payrollDate: bigint,
     chainId: bigint,
-    recipientsHash: string
-  ): string {
-    const encoded = encodeAbiParameters(
-      parseAbiParameters("uint256, address, uint256, uint256, uint256, bytes32"),
-      [payrollId, provider, amount, payrollDate, chainId, recipientsHash as `0x${string}`]
+    recipientsHash: `0x${string}`
+  ): `0x${string}` {
+    return keccak256(
+      encodePacked(
+        ["uint256", "address", "uint256", "uint256", "uint256", "bytes32"],
+        [payrollId, provider, amount, payrollDate, chainId, recipientsHash]
+      )
     );
-    return keccak256(encoded);
   }
-
+  
   /**
    * Sign state hash for Arc distributor verification
    */
@@ -757,7 +751,7 @@ export class YellowChunkingService {
       batch.totalAmount,
       batch.payrollDate,
       batch.sourceChainId,
-      recipientsHash
+      recipientsHash as `0x${string}`
     );
 
     // Sign the state hash
