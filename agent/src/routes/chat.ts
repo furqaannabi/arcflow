@@ -1277,4 +1277,33 @@ router.get("/session/:sessionId", async (req: Request, res: Response) => {
   });
 });
 
+// Get payrolls for a specific wallet
+router.get("/payrolls/:wallet", async (req: Request, res: Response) => {
+  try {
+    const wallet = req.params.wallet.toLowerCase();
+    const status = req.query.status as string | undefined;
+
+    const filter: Record<string, unknown> = { employerWallet: { $regex: new RegExp(`^${wallet}$`, "i") } };
+    if (status) filter.status = status;
+
+    const payrolls = await Payroll.find(filter).sort({ createdAt: -1 }).lean();
+
+    res.json(
+      payrolls.map((p) => ({
+        payrollId: p.payrollId,
+        totalAmount: p.totalAmount,
+        payrollDate: p.payrollDate,
+        status: p.status,
+        chainId: p.chainId,
+        txHash: p.txHash,
+        recipients: p.recipients,
+        createdAt: p.createdAt,
+      }))
+    );
+  } catch (error) {
+    console.error("Payrolls fetch error:", error);
+    res.status(500).json({ error: "Failed to fetch payrolls" });
+  }
+});
+
 export { router as chatRouter };
