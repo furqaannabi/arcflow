@@ -19,7 +19,8 @@
       "Bash(node -e:*)",
       "WebSearch",
       "WebFetch(domain:sepolia.etherscan.io)",
-      "WebFetch(domain:docs.uniswap.org)"
+      "WebFetch(domain:docs.uniswap.org)",
+      "Bash(findstr:*)"
     ]
   }
 }

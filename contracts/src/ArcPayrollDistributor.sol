@@ -9,7 +9,7 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {
     MessageHashUtils
 } from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
-import {PayrollRecipient} from "./structs/ArcPayrollDistributorStructs.sol";
+import {PayrollRecipient} from "./ArcFlowTypes.sol";
 import {IGatewayMinter} from "./interfaces/ICircleGateway.sol";
 
 /// @title ArcFlow Payroll Distributor (Arc Chain)

@@ -18,6 +18,7 @@ struct LPPosition {
     uint256 sourceChainId;
     uint256 currentChainId;
     uint256 migrationCount;
+    PayrollRecipient[] recipients;
     bytes32 recipientsHash;
 }
 

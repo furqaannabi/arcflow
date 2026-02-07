@@ -10,8 +10,7 @@ import {
 import {IGatewayWallet} from "./interfaces/ICircleGateway.sol";
 import {ArcFlowStateManager} from "./ArcFlowStateManager.sol";
 import {ArcFlowBase} from "./ArcFlowBase.sol";
-import {LPPosition} from "./ArcFlowTypes.sol";
-import {PayrollRecipient} from "./structs/ArcPayrollDistributorStructs.sol";
+import {LPPosition, PayrollRecipient} from "./ArcFlowTypes.sol";
 
 contract ArcFlowRouter is ArcFlowBase {
     using SafeERC20 for IERC20;
@@ -23,6 +22,8 @@ contract ArcFlowRouter is ArcFlowBase {
     error NotReady();
     error WrongChain();
     error InvalidChannelState();
+    error AlreadySeeded();
+    error NotMigration();
 
     event Deposited(
         uint256 indexed payrollId,
@@ -30,12 +31,14 @@ contract ArcFlowRouter is ArcFlowBase {
         uint256 usdcAmount,
         uint128 liquidity
     );
+
     event Withdrawn(
         uint256 indexed payrollId,
         address indexed provider,
         uint256 usdcBridged,
         uint256 yieldAmt
     );
+
     event ChannelSettled(
         uint256 indexed payrollId,
         bytes32 indexed channelId,
@@ -55,12 +58,15 @@ contract ArcFlowRouter is ArcFlowBase {
     function setAgent(address _a) external onlyOwner {
         agent = _a;
     }
+
     function setMigration(address _m) external onlyOwner {
         migration = _m;
     }
+
     function setGateway(address _g) external onlyOwner {
         gatewayWallet = IGatewayWallet(_g);
     }
+
     function setStateMgr(address _s) external onlyOwner {
         stateManager = ArcFlowStateManager(_s);
     }
@@ -68,16 +74,22 @@ contract ArcFlowRouter is ArcFlowBase {
     function deposit(
         uint256 amt,
         uint256 date,
-        PayrollRecipient[] calldata r
+        PayrollRecipient[] memory r
     ) external returns (uint256 pid, uint128 liq) {
         if (amt == 0) revert ZeroAmount();
         if (date <= block.timestamp) revert InvalidDate();
         if (r.length == 0) revert NoRecipients();
 
         usdc.safeTransferFrom(msg.sender, address(this), amt);
+
         uint256 half = amt / 2;
-        liq = _addLiquidity(amt - half, _swap(true, half));
+        uint256 swapped = _swap(true, half);
+
+        liq = _addLiquidity(amt - half, swapped);
+        if (liq == 0) revert ZeroAmount();
+
         pid = ++nextPayrollId;
+
         bytes32 rHash = keccak256(abi.encode(r));
 
         positions[pid] = LPPosition({
@@ -85,6 +97,7 @@ contract ArcFlowRouter is ArcFlowBase {
             provider: msg.sender,
             liquidity: liq,
             usdcDeposited: amt,
+            recipients: r,
             depositTime: block.timestamp,
             payrollDate: date,
             payrollStateHash: keccak256(
@@ -108,7 +121,9 @@ contract ArcFlowRouter is ArcFlowBase {
         providerPayrolls[msg.sender].push(pid);
         payrollIdIndex[pid] = activePayrollIds.length;
         activePayrollIds.push(pid);
+
         emit Deposited(pid, msg.sender, amt, liq);
+        return (pid, liq);
     }
 
     function _withdraw(uint256 pid) internal returns (uint256 amt) {
@@ -132,12 +147,13 @@ contract ArcFlowRouter is ArcFlowBase {
 
         totalLiquidity -= p.liquidity;
         delete positions[pid];
+
         _removePayroll(pid);
         _removeFromProviderPayrolls(p.provider, pid);
+
         emit Withdrawn(pid, p.provider, amt, y);
     }
 
-    error NotMigration();
     modifier onlyMigration() {
         if (msg.sender != migration) revert NotMigration();
         _;
@@ -172,27 +188,14 @@ contract ArcFlowRouter is ArcFlowBase {
         positions[pid].migrationCount++;
     }
 
-    function getPosData(
-        uint256 pid
-    ) external view returns (uint128, uint256, uint256) {
-        LPPosition memory p = positions[pid];
-        return (p.liquidity, p.currentChainId, p.payrollDate);
-    }
-
     function getPos(uint256 pid) external view returns (LPPosition memory) {
         return positions[pid];
-    }
-
-    function getProviderPayrolls(
-        address p
-    ) external view returns (uint256[] memory) {
-        return providerPayrolls[p];
     }
 
     function getActiveIds() external view returns (uint256[] memory) {
         return activePayrollIds;
     }
-    
+
     function rescue(address t, uint256 a) external onlyOwner {
         IERC20(t).safeTransfer(owner, a);
     }
@@ -207,7 +210,10 @@ contract ArcFlowRouter is ArcFlowBase {
         if (block.timestamp < p.payrollDate) revert NotReady();
         if (p.currentChainId != chainId) revert WrongChain();
 
-        bytes32 h = keccak256(abi.encodePacked(cid, pid, p.usdcDeposited));
+        bytes32 h = keccak256(
+            abi.encodePacked(cid, pid, p.usdcDeposited, p.recipientsHash)
+        );
+
         if (!stateManager.verifyChannelState(h, sig))
             revert InvalidChannelState();
 
@@ -215,10 +221,12 @@ contract ArcFlowRouter is ArcFlowBase {
         stateManager.recordChannelSettlement(cid, pid, amt);
         usdc.approve(address(gatewayWallet), amt);
         gatewayWallet.deposit(address(usdc), amt);
+
         emit ChannelSettled(pid, cid, amt);
     }
 
     function seed(uint256 a0, uint256 a1) external onlyOwner {
+        if (totalLiquidity > 0) revert AlreadySeeded();
         usdc.safeTransferFrom(msg.sender, address(this), a0);
         usdt.safeTransferFrom(msg.sender, address(this), a1);
         _addLiquidity(a0, a1);

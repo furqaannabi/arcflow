@@ -125,6 +125,8 @@ export class PayrollCron {
   private defiLlamaService: DefiLlamaService;
   private yellowService: YellowChunkingService;
   private yellowInitialized: boolean = false;
+  private yellowInitAttempts: number = 0;
+  private readonly MAX_YELLOW_RETRIES = 3;
 
   // Minimum APY difference to trigger rebalance (0.5% = 50 basis points)
   private readonly MIN_APY_DIFF_FOR_REBALANCE = 0.5;
@@ -141,22 +143,31 @@ export class PayrollCron {
 
   /**
    * Initialize Yellow Network SDK connection
-   * Called once on startup
+   * Stops retrying after MAX_YELLOW_RETRIES failures
    */
   async initializeYellowSDK(): Promise<void> {
     if (this.yellowInitialized) {
       return;
     }
 
+    if (this.yellowInitAttempts >= this.MAX_YELLOW_RETRIES) {
+      return;
+    }
+
+    this.yellowInitAttempts++;
+
     try {
-      console.log("[CRON] Initializing Yellow Network SDK...");
+      console.log(`[CRON] Initializing Yellow Network SDK (attempt ${this.yellowInitAttempts}/${this.MAX_YELLOW_RETRIES})...`);
       await this.yellowService.initializeSDK();
       this.yellowInitialized = true;
       console.log("[CRON] Yellow Network SDK ready");
     } catch (error) {
-      console.error("[CRON] Failed to initialize Yellow SDK:", error);
-      console.log("[CRON] Will fallback to direct execution");
-      this.useYellowChannels = false;
+      const msg = (error as Error).message;
+      console.error(`[CRON] Yellow SDK init failed: ${msg}`);
+      if (this.yellowInitAttempts >= this.MAX_YELLOW_RETRIES) {
+        console.log("[CRON] Yellow SDK max retries reached - falling back to direct execution");
+        this.useYellowChannels = false;
+      }
     }
   }
 
@@ -253,7 +264,8 @@ export class PayrollCron {
   }
 
   /**
-   * Single cron tick - check and execute via Yellow Network ONLY
+   * Single cron tick - check and execute ready payrolls
+   * Tries Yellow Network first, falls back to logging ready payrolls
    */
   async tick(): Promise<CronResult> {
     const result: CronResult = {
@@ -263,9 +275,8 @@ export class PayrollCron {
     };
 
     try {
-      // Ensure Yellow Network is ready
-      if (!this.isYellowReady() && this.privateKey) {
-        console.log("[CRON] Yellow Network not ready, initializing...");
+      // Try Yellow init only if we haven't exhausted retries
+      if (!this.isYellowReady() && this.privateKey && this.yellowInitAttempts < this.MAX_YELLOW_RETRIES) {
         await this.initializeYellowSDK();
       }
 
@@ -290,11 +301,10 @@ export class PayrollCron {
                 console.error(`[CRON] Failed to execute payroll #${payrollId}:`, (error as Error).message);
               }
             }
-          } else if (!this.isYellowReady()) {
-            console.log("[CRON] Yellow Network not available - cannot execute payrolls");
-          } else {
+          } else if (!this.privateKey) {
             console.log("[CRON] No private key configured - skipping execution");
           }
+          // When Yellow is unavailable, just log (no spam) - payrolls stay ready for next attempt
         }
       }
     } catch (error) {

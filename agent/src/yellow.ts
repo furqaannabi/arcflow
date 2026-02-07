@@ -428,6 +428,7 @@ export class YellowChunkingService {
     settled: boolean;
     txHash?: string;
   }> {
+    try {
     if (!this.isSDKReady()) {
       await this.initializeSDK();
     }
@@ -437,12 +438,7 @@ export class YellowChunkingService {
     }
 
     const payrollKey = payrollId.toString();
-    const recipients = this.recipientCache.get(payrollKey);
-
-    if (!recipients || recipients.length === 0) {
-      throw new Error(`No recipients cached for payroll ${payrollKey}`);
-    }
-
+    
     const totalAmount = recipients.reduce((sum, r) => sum + r.amount, 0n);
     console.log(`[YELLOW] Executing payroll ${payrollKey} via state channel`);
     console.log(`[YELLOW] Total amount: ${formatUnits(totalAmount, 6)} USDC`);
@@ -488,9 +484,13 @@ export class YellowChunkingService {
 
     return {
       channelId,
-      settled: true,
-      txHash,
-    };
+        settled: true,
+        txHash,
+      };
+    } catch (error) {
+      console.error("[YELLOW] Error executing payroll via channel:", error);
+      throw error;
+    }
   }
 
   /**

@@ -268,7 +268,8 @@ abstract contract ArcFlowBase is IUnlockCallback {
     function getReadyPayrolls() external view returns (uint256[] memory) {
         uint256 count = 0;
         for (uint256 i = 0; i < activePayrollIds.length; i++) {
-            if (block.timestamp >= positions[activePayrollIds[i]].payrollDate) {
+            LPPosition memory pos = positions[activePayrollIds[i]];
+            if (pos.liquidity > 0 && block.timestamp >= pos.payrollDate && pos.currentChainId == chainId) {
                 count++;
             }
         }
@@ -277,7 +278,8 @@ abstract contract ArcFlowBase is IUnlockCallback {
         uint256 idx = 0;
         for (uint256 i = 0; i < activePayrollIds.length; i++) {
             uint256 pid = activePayrollIds[i];
-            if (block.timestamp >= positions[pid].payrollDate) {
+            LPPosition memory pos = positions[pid];
+            if (pos.liquidity > 0 && block.timestamp >= pos.payrollDate && pos.currentChainId == chainId) {
                 ready[idx++] = pid;
             }
         }
