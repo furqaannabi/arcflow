@@ -1,4 +1,4 @@
-import { createPublicClient, http, formatUnits, } from "viem";
+import { createPublicClient, http, formatUnits, encodeFunctionData, } from "viem";
 import { baseSepolia } from "viem/chains";
 import addressesJson from "./addresses.json" with { type: "json" };
 import abis from "./abis.json" with { type: "json" };
@@ -39,26 +39,37 @@ export class ContractService {
         return formatUnits(allowance, 6);
     }
     async getPositions(provider) {
-        const positions = await this.client.readContract({
+        // Get payroll IDs for provider
+        const payrollIds = await this.client.readContract({
             address: ADDRESSES.router,
             abi: ROUTER_ABI,
-            functionName: "getProviderPositions",
+            functionName: "getProviderPayrolls",
             args: [provider],
         });
-        return positions.map((p) => ({
-            payrollId: p.payrollId,
-            provider: p.provider,
-            liquidity: p.liquidity,
-            usdcDeposited: p.usdcDeposited,
-            depositTime: p.depositTime,
-            payrollDate: p.payrollDate,
-            accumulatedYield: p.accumulatedYield,
-            currentChainId: p.currentChainId,
-        }));
+        // Fetch each position
+        const positions = [];
+        for (const pid of payrollIds) {
+            const p = await this.client.readContract({
+                address: ADDRESSES.router,
+                abi: ROUTER_ABI,
+                functionName: "getPos",
+                args: [pid],
+            });
+            positions.push({
+                payrollId: p.payrollId,
+                provider: p.provider,
+                liquidity: p.liquidity,
+                usdcDeposited: p.usdcDeposited,
+                depositTime: p.depositTime,
+                payrollDate: p.payrollDate,
+                accumulatedYield: p.accumulatedYield,
+                currentChainId: p.currentChainId,
+            });
+        }
+        return positions;
     }
     // Generate calldata for approval transaction
     generateApprovalCalldata(amount) {
-        const { encodeFunctionData } = require("viem");
         return {
             to: ADDRESSES.usdc,
             data: encodeFunctionData({
@@ -70,7 +81,6 @@ export class ContractService {
     }
     // Generate calldata for deposit transaction
     generateDepositCalldata(amount, payrollDate, recipients) {
-        const { encodeFunctionData } = require("viem");
         return {
             to: ADDRESSES.router,
             data: encodeFunctionData({
@@ -108,20 +118,19 @@ export class ContractService {
         const ids = await this.client.readContract({
             address: ADDRESSES.router,
             abi: ROUTER_ABI,
-            functionName: "getActivePayrollIds",
+            functionName: "getActiveIds",
             args: [],
         });
         return ids;
     }
-    // Generate calldata for executing ready payrolls
-    generateExecuteReadyPayrollsCalldata() {
-        const { encodeFunctionData } = require("viem");
+    // Generate calldata for settling via Yellow channel
+    generateSettleCalldata(payrollId, channelId, signature) {
         return {
             to: ADDRESSES.router,
             data: encodeFunctionData({
                 abi: ROUTER_ABI,
-                functionName: "executeReadyPayrolls",
-                args: [],
+                functionName: "settle",
+                args: [payrollId, channelId, signature],
             }),
         };
     }
@@ -137,7 +146,6 @@ export class ContractService {
     }
     // Generate calldata for migrate out
     generateMigrateOutCalldata(payrollId, targetChainId) {
-        const { encodeFunctionData } = require("viem");
         return {
             to: ADDRESSES.migration,
             data: encodeFunctionData({
@@ -149,7 +157,6 @@ export class ContractService {
     }
     // Generate calldata for migrate in
     generateMigrateInCalldata(payrollId, fromChainId, amount, attestation, signature) {
-        const { encodeFunctionData } = require("viem");
         return {
             to: ADDRESSES.migration,
             data: encodeFunctionData({

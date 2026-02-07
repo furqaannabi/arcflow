@@ -37,7 +37,7 @@ export declare class ContractService {
     getReadyPayrolls(): Promise<bigint[]>;
     isPayrollReady(payrollId: bigint): Promise<boolean>;
     getActivePayrollIds(): Promise<bigint[]>;
-    generateExecuteReadyPayrollsCalldata(): {
+    generateSettleCalldata(payrollId: bigint, channelId: `0x${string}`, signature: `0x${string}`): {
         to: Address;
         data: string;
     };

@@ -137,13 +137,21 @@ export declare class YellowChunkingService {
     getSDKClient(): YellowSDKClient | null;
     /**
      * Execute payroll via Yellow Network state channel
-     * Creates channel → Funds → Settles
+     * Creates channel → Funds → Settles → Records on-chain
      */
     executePayrollViaChannel(payrollId: bigint): Promise<{
         channelId: string;
         settled: boolean;
         txHash?: string;
     }>;
+    /**
+     * Sign channel state hash for contract verification
+     */
+    signChannelState(channelId: `0x${string}`, payrollId: bigint, totalAmount: bigint): Promise<string | null>;
+    /**
+     * Record channel settlement on StateManager contract
+     */
+    recordChannelSettlementOnChain(channelId: `0x${string}`, payrollId: bigint, totalAmount: bigint): Promise<string | undefined>;
     /**
      * Get current channel info from SDK
      */

@@ -1,4 +1,4 @@
-import { type Address, type Hash, type Chain } from "viem";
+import { type Address, type Chain } from "viem";
 import { YellowChunkingService } from "./yellow";
 interface ChainConfig {
     id: number;
@@ -98,11 +98,16 @@ export declare class PayrollCron {
         readyIds: bigint[];
     }[]>;
     /**
-     * Execute all ready payrolls on a specific chain
+     * Execute payroll via Yellow Network state channel (REQUIRED)
+     * Direct execution is disabled - all payrolls must go through Yellow
      */
-    executeReadyPayrollsOnChain(chainConfig: ChainConfig): Promise<Hash>;
+    executePayrollViaYellow(payrollId: bigint): Promise<{
+        channelId: string;
+        settled: boolean;
+        txHash?: string;
+    }>;
     /**
-     * Single cron tick - check and execute across all chains
+     * Single cron tick - check and execute via Yellow Network ONLY
      */
     tick(): Promise<CronResult>;
     /**
@@ -129,9 +134,13 @@ export declare class PayrollCron {
         apyDiff: bigint;
     }>;
     /**
-     * Execute migration out to target chain
+     * Execute migration via Yellow Network state channel (REQUIRED)
+     * Direct migration is disabled - all migrations must go through Yellow
      */
-    executeMigrateOut(chainConfig: ChainConfig, payrollId: bigint, targetChainId: bigint): Promise<Hash>;
+    executeMigrateViaYellow(chainConfig: ChainConfig, payrollId: bigint, targetChainId: bigint): Promise<{
+        channelId: string;
+        txHash?: string;
+    }>;
     /**
      * Check active payrolls for rebalancing opportunities across all chains
      * Returns array of opportunities and optionally executes migrations if private key is set
