@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Bot, FileText, X, Sparkles, TrendingUp, Users, Menu } from "lucide-react";
+import { Send, Bot, FileText, X, Sparkles, TrendingUp, Users, Menu, Receipt } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import ChatMessage from "@/components/chat/ChatMessage";
 import CSVUpload from "@/components/chat/CSVUpload";
 import Sidebar from "@/components/Sidebar";
 import ConnectButton from "@/components/ConnectButton";
+import PayrollsPanel from "@/components/PayrollsPanel";
 
 // Define message type locally matching what ChatMessage expects
 interface Message {
@@ -71,6 +72,8 @@ export default function AgentChat() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [payrollsPanelOpen, setPayrollsPanelOpen] = useState(false);
+  const [allowFileUpload, setAllowFileUpload] = useState(false);
   // Backend session ID for API calls
   const [sessionId, setSessionId] = useState<string | null>(null);
   // Frontend session ID for localStorage persistence
@@ -114,6 +117,25 @@ export default function AgentChat() {
   useEffect(() => {
     localStorage.setItem('arcflow_active_session', frontendSessionId);
   }, [frontendSessionId]);
+
+  // Fetch session state to restore upload button visibility
+  useEffect(() => {
+    if (!sessionId) return;
+    
+    const fetchSessionState = async () => {
+      try {
+        const response = await fetch(`${AGENT_API_URL}/api/session/${sessionId}`);
+        if (response.ok) {
+          const data = await response.json();
+          setAllowFileUpload(data.allowFileUpload);
+        }
+      } catch (error) {
+        console.error("Failed to fetch session state:", error);
+      }
+    };
+    
+    fetchSessionState();
+  }, [sessionId]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -231,9 +253,10 @@ export default function AgentChat() {
                 } else if (data.error) {
                   // Error event
                   throw new Error(data.error);
-                } else if (data.transactions) {
-                  // Done event with transactions
-                  transactions = data.transactions;
+                } else if (data.transactions !== undefined || data.allowFileUpload !== undefined) {
+                  // Done event - update transactions and upload state
+                  if (data.transactions) transactions = data.transactions;
+                  if (data.allowFileUpload !== undefined) setAllowFileUpload(data.allowFileUpload);
                 }
               } catch (e) {
                 if ((e as Error).message !== "Unexpected end of JSON input") {
@@ -367,6 +390,13 @@ export default function AgentChat() {
           </div>
           
           <div className="flex items-center gap-4">
+            <button
+              onClick={() => setPayrollsPanelOpen(!payrollsPanelOpen)}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-accent transition-colors"
+            >
+              <Receipt className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+              <span className="hidden md:inline text-sm font-medium text-gray-700 dark:text-gray-300">Payrolls</span>
+            </button>
             <ConnectButton />
           </div>
         </header>
@@ -424,10 +454,12 @@ export default function AgentChat() {
             )}
             
             <div className="flex items-center gap-2 md:gap-3">
-              <CSVUpload 
-                onFilesSelect={(files) => setSelectedFiles(prev => [...prev, ...files])} 
-                disabled={isLoading} 
-              />
+              {allowFileUpload && (
+                <CSVUpload 
+                  onFilesSelect={(files) => setSelectedFiles(prev => [...prev, ...files])} 
+                  disabled={isLoading} 
+                />
+              )}
               
               <div className="flex-1 relative">
                 <textarea
@@ -453,6 +485,13 @@ export default function AgentChat() {
           </div>
         </div>
       </div>
+
+      {/* Payrolls Panel */}
+      <PayrollsPanel 
+        isOpen={payrollsPanelOpen}
+        onClose={() => setPayrollsPanelOpen(false)}
+        userAddress={userAddress || undefined}
+      />
     </div>
   );
 }
