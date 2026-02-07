@@ -79,7 +79,7 @@ export default function ChatMessage({ role, content, timestamp, onTransactionSuc
         )}
       </div>
 
-      <div className={cn("flex flex-col max-w-[80%] min-w-0", isUser ? "items-end" : "items-start")} style={{ maxWidth: 'min(80%, 600px)' }}>
+      <div className={cn("flex flex-col min-w-0", isUser ? "items-end" : "items-start")} style={{ maxWidth: 'min(80%, 520px)' }}>
         {/* Helper name */}
         <span className="text-xs text-gray-400 dark:text-gray-500 mb-1 px-1">
           {isUser ? "You" : "ArcFlow"}
@@ -93,7 +93,7 @@ export default function ChatMessage({ role, content, timestamp, onTransactionSuc
               : "bg-white dark:bg-card text-gray-800 dark:text-foreground rounded-tl-sm border border-gray-100 dark:border-border"
           )}
         >
-          <div className="markdown-content break-words overflow-hidden">
+          <div className="markdown-content break-words overflow-hidden" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
             <ReactMarkdown 
               remarkPlugins={[remarkGfm]}
               components={{
@@ -107,7 +107,7 @@ export default function ChatMessage({ role, content, timestamp, onTransactionSuc
                   return inline ? (
                     <code className="bg-gray-200 dark:bg-gray-800 px-1 py-0.5 rounded text-xs font-mono" {...props}>{children}</code>
                   ) : (
-                    <code className="block bg-gray-200 dark:bg-gray-800 p-2 rounded text-xs font-mono my-2 overflow-x-auto" {...props}>{children}</code>
+                    <code className="block bg-gray-200 dark:bg-gray-800 p-2 rounded text-xs font-mono my-2 overflow-x-auto whitespace-pre-wrap" style={{ overflowWrap: 'anywhere', wordBreak: 'break-all' }} {...props}>{children}</code>
                   );
                 }
               }}

@@ -88,11 +88,11 @@ export default function TransactionAction({ to, data, description, value = "0", 
       </div>
 
       {status === "error" && (
-        <div className="mb-3 p-3 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-900/30 rounded-lg flex items-start gap-2 animate-in fade-in slide-in-from-top-1">
+        <div className="mb-3 p-3 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-900/30 rounded-lg flex items-start gap-2 animate-in fade-in slide-in-from-top-1 overflow-hidden">
           <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
-          <div className="text-sm text-red-600 dark:text-red-400 break-words">
+          <div className="text-sm text-red-600 dark:text-red-400 min-w-0 overflow-hidden" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
             <span className="font-semibold block mb-0.5">Transaction Error</span>
-            {errorMessage}
+            <span className="block break-all">{errorMessage}</span>
           </div>
         </div>
       )}
