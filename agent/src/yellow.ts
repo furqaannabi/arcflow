@@ -421,52 +421,81 @@ export class YellowChunkingService {
     return this.sdkClient;
   }
 
-  async executePayrollViaChannel(payrollId: bigint): Promise<{
+  async executePayrollViaChannel(
+    payrollId: bigint
+  ): Promise<{
     channelId: string;
     settled: boolean;
     txHash?: string;
   }> {
     try {
+      // Ensure SDK ready
       if (!this.isSDKReady()) {
-        await this.initializeSDK();
+        try {
+          await this.initializeSDK();
+        } catch {
+          console.log("[YELLOW] SDK unavailable, skipping channel execution");
+          return {
+            channelId: "0x0",
+            settled: false,
+          };
+        }
       }
   
       if (!this.sdkClient) {
         throw new Error("SDK client not available");
       }
   
+      // Fetch position from router
       const pos = await contractService.getPos(payrollId);
-      const totalAmount = pos.usdcDeposited;
   
-      const payrollKey = payrollId.toString();
-      const recipients = this.recipientCache.get(payrollKey);
+      const totalAmount = pos.usdcDeposited;
+      const recipients = pos.recipients;
   
       if (!recipients || recipients.length === 0) {
-        throw new Error(`No recipients cached for payroll ${payrollKey}`);
+        throw new Error(
+          `No recipients found on-chain for payroll ${payrollId}`
+        );
       }
   
-      console.log(`[YELLOW] Executing payroll ${payrollKey} via state channel`);
-      console.log(`[YELLOW] Total amount: ${formatUnits(totalAmount, 6)} USDC`);
+      const payrollKey = payrollId.toString();
+  
+      console.log(
+        `[YELLOW] Executing payroll ${payrollKey} via state channel`
+      );
+      console.log(
+        `[YELLOW] Total amount: ${formatUnits(totalAmount, 6)} USDC`
+      );
       console.log(
         `[YELLOW] Recipients: ${recipients
-          .map((r) => `${r.wallet}: ${formatUnits(r.amount, 6)} USDC`)
+          .map(
+            (r: any) =>
+              `${r.wallet}: ${formatUnits(r.amount, 6)} USDC`
+          )
           .join(", ")}`
       );
   
+      // Step 1: Create channel
       console.log("[YELLOW] Step 1: Creating channel...");
       const channelId = await this.sdkClient.createChannel();
       console.log(`[YELLOW] Channel created: ${channelId}`);
   
+      // Step 2: Fund channel
       console.log("[YELLOW] Step 2: Funding channel...");
       await this.sdkClient.fundChannel(totalAmount);
       console.log("[YELLOW] Channel funded");
   
-      console.log("[YELLOW] Step 3: Payroll distribution recorded in channel state");
+      // Step 3: Off-chain payroll state
+      console.log(
+        "[YELLOW] Step 3: Payroll distribution recorded in channel state"
+      );
   
+      // Step 4: Close channel
       console.log("[YELLOW] Step 4: Closing channel and settling...");
       await this.sdkClient.closeChannel();
       console.log("[YELLOW] Channel closed and settled");
   
+      // Step 5: Sign channel state
       console.log("[YELLOW] Step 5: Signing channel state...");
       const channelStateSignature = await this.signChannelState(
         channelId as `0x${string}`,
@@ -474,7 +503,9 @@ export class YellowChunkingService {
         totalAmount
       );
   
+      // Step 6: Record settlement on-chain
       let txHash: string | undefined;
+  
       if (channelStateSignature) {
         console.log("[YELLOW] Step 6: Recording settlement on-chain...");
         txHash = await this.recordChannelSettlementOnChain(
@@ -491,10 +522,14 @@ export class YellowChunkingService {
         txHash,
       };
     } catch (error) {
-      console.error("[YELLOW] Error executing payroll via channel:", error);
+      console.error(
+        "[YELLOW] Error executing payroll via channel:",
+        error
+      );
       throw error;
     }
-  }  
+  }
+  
 
   /**
    * Sign channel state hash for contract verification
@@ -531,41 +566,46 @@ export class YellowChunkingService {
     }
   }
 
-  /**
-   * Record channel settlement on StateManager contract
-   */
   async recordChannelSettlementOnChain(
     channelId: `0x${string}`,
     payrollId: bigint,
     totalAmount: bigint
   ): Promise<string | undefined> {
     if (!this.privateKey) return undefined;
-
+  
     try {
-      const rpcUrl = getRpcUrl(CHAIN_IDS.SEPOLIA, this.alchemyApiKey);
-      const account = privateKeyToAccount(this.privateKey as `0x${string}`);
-
+      const chainId = CHAIN_IDS.BASE_SEPOLIA;
+      const rpcUrl = getRpcUrl(chainId, this.alchemyApiKey);
+      const account = privateKeyToAccount(
+        this.privateKey as `0x${string}`
+      );
+  
       const walletClient = createWalletClient({
         account,
-        chain: sepolia,
+        chain: baseSepolia,
         transport: http(rpcUrl),
       });
-
-      const stateManagerAddress = addressesJson.sepolia.stateManager as Address;
-
+  
+      const stateManagerAddress =
+        addressesJson.baseSepolia.stateManager as Address;
+  
       const hash = await walletClient.writeContract({
         address: stateManagerAddress,
         abi: STATE_MANAGER_ABI,
         functionName: "recordChannelSettlement",
         args: [channelId, payrollId, totalAmount],
       });
-
+  
       return hash;
     } catch (error) {
-      console.error("[YELLOW] Error recording settlement on-chain:", error);
+      console.error(
+        "[YELLOW] Error recording settlement on-chain:",
+        error
+      );
       return undefined;
     }
   }
+  
 
   /**
    * Get current channel info from SDK
