@@ -87,6 +87,10 @@ export default function PayrollsPanel({ isOpen, onClose, userAddress }: Payrolls
             <div className="flex items-center justify-center h-full">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
             </div>
+          ) : error ? (
+            <div className="flex flex-col items-center justify-center h-full text-center px-4">
+              <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+            </div>
           ) : payrolls.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center px-4">
               <Calendar className="w-12 h-12 text-gray-300 dark:text-gray-600 mb-3" />
@@ -99,8 +103,63 @@ export default function PayrollsPanel({ isOpen, onClose, userAddress }: Payrolls
             </div>
           ) : (
             <div className="space-y-3">
-              {/* Payroll cards will go here */}
-              <p className="text-sm text-gray-500">Payrolls will appear here</p>
+              {payrolls.map((payroll) => {
+                const amount = (Number(payroll.totalAmount) / 1e6).toFixed(2);
+                const date = new Date(Number(payroll.payrollDate) * 1000);
+                const statusColors = {
+                  pending: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
+                  deposited: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+                  executed: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+                  failed: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+                };
+
+                return (
+                  <div
+                    key={payroll.payrollId}
+                    className="bg-gray-50 dark:bg-muted border border-gray-200 dark:border-border rounded-lg p-4 hover:border-blue-300 dark:hover:border-blue-700 transition-colors"
+                  >
+                    {/* Status Badge */}
+                    <div className="flex items-center justify-between mb-3">
+                      <span className={cn(
+                        "text-xs font-medium px-2 py-1 rounded-full",
+                        statusColors[payroll.status as keyof typeof statusColors] || statusColors.pending
+                      )}>
+                        {payroll.status.charAt(0).toUpperCase() + payroll.status.slice(1)}
+                      </span>
+                      {payroll.txHash && (
+                        <a
+                          href={`https://sepolia.basescan.org/tx/${payroll.txHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 dark:text-blue-400 hover:underline"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                        </a>
+                      )}
+                    </div>
+
+                    {/* Amount */}
+                    <div className="flex items-center gap-2 mb-2">
+                      <DollarSign className="w-5 h-5 text-gray-500 dark:text-gray-400" />
+                      <span className="text-lg font-bold text-gray-900 dark:text-foreground">
+                        ${amount} USDC
+                      </span>
+                    </div>
+
+                    {/* Date */}
+                    <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 mb-2">
+                      <Clock className="w-4 h-4" />
+                      <span>{date.toLocaleDateString()} at {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+
+                    {/* Recipients */}
+                    <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                      <Users className="w-4 h-4" />
+                      <span>{payroll.recipients.length} recipient{payroll.recipients.length !== 1 ? 's' : ''}</span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
