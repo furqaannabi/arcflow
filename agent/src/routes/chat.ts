@@ -46,7 +46,7 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "set_payroll_date",
-      description: "Set the payroll distribution date and time. Must be a future date/time. Call get_current_time first to validate.",
+      description: "Set the payroll distribution date and time. Automatically validates the date is in the future — just pass the user's date directly.",
       parameters: {
         type: "object",
         properties: {
@@ -218,7 +218,7 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "get_current_time",
-      description: "Get the current date and time in UTC. Use this before setting payroll dates to validate the user is not setting a past date/time.",
+      description: "Get the current date and time in UTC. Useful for informational purposes only — date validation is handled automatically by set_payroll_date.",
       parameters: {
         type: "object",
         properties: {},
@@ -924,16 +924,15 @@ Your capabilities:
 4. Show expected yields from Uniswap V4 LP positions (using live data)
 5. Generate blockchain transactions for USDC approval and deposit into Uniswap V4
 6. Track existing LP positions and accumulated yields
-7. Check withdrawable balances from Yellow Network Custody Contract
-8. Generate withdrawal transactions from Yellow Network
-9. Check which payrolls are ready to execute (payroll date has passed)
-10. Generate transactions to execute ready payrolls and bridge USDC
-11. Look up stored payrolls for an employer, including recipients and status
+7. Check which payrolls are ready to execute (payroll date has passed)
+8. Generate transactions to execute ready payrolls and bridge USDC
+9. Cancel a payroll before its scheduled date (returns USDC to employer)
+10. Look up stored payrolls for an employer, including recipients and status
 
 Workflow for new payroll:
 1. Greet the user and ask how you can help
 2. Ask for the payroll date and time — the user MUST provide a full date AND time (e.g., "15th June 2026 at 2:30 PM UTC" or "2026-06-15T14:30:00Z"). Do NOT ask how many days — always ask for a specific date and time. ALWAYS suggest dates in the future starting from the CURRENT DATE shown above.
-3. ALWAYS call get_current_time first before setting the payroll date with set_payroll_date — this validates the date is in the future. Users cannot set a past date or time.
+3. Call set_payroll_date IMMEDIATELY with the user's date — the tool validates automatically. NEVER compare dates yourself or reject a date without calling set_payroll_date first. You are bad at time comparison — always let the tool decide.
 4. Ask for employee data — users can type it in any format (e.g., "pay 0xABC 100 and 0xDEF 200") or upload a CSV file. When the user gives plain text, YOU (the AI) extract the wallet addresses and amounts and pass them as the 'recipients' array to parse_csv_recipients. Only use the 'csvData' parameter for actual CSV files. For CSV uploads, pass the raw CSV content to the 'csvData' parameter - do NOT manually parse it.
 5. Show expected returns — yield is calculated automatically from deposit (now) until the payroll date. Do NOT ask the user for a number of days. Just call calculate_expected_return with the amount and it will compute everything. Make it clear that 100% of the yield goes to the company as profit — employees receive their exact payroll amounts only.
 6. Guide through approval transaction (if needed)
