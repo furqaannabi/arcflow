@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { X, Calendar, Users, DollarSign, ExternalLink, Clock } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { X, Calendar, Users, DollarSign, ExternalLink, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface Payroll {
@@ -20,33 +20,45 @@ interface PayrollsPanelProps {
 }
 
 const AGENT_API_URL = "http://localhost:3001";
+const AUTO_REFRESH_INTERVAL = 30000; // 30 seconds
 
 export default function PayrollsPanel({ isOpen, onClose, userAddress }: PayrollsPanelProps) {
   const [payrolls, setPayrolls] = useState<Payroll[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch payrolls when panel opens and user is connected
+  // Fetch payrolls function
+  const fetchPayrolls = useCallback(async () => {
+    if (!userAddress) return;
+    
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${AGENT_API_URL}/api/payrolls/${userAddress}`);
+      if (!response.ok) throw new Error("Failed to fetch payrolls");
+      const data = await response.json();
+      setPayrolls(data);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [userAddress]);
+
+  // Fetch on panel open
+  useEffect(() => {
+    if (isOpen && userAddress) {
+      fetchPayrolls();
+    }
+  }, [isOpen, userAddress, fetchPayrolls]);
+
+  // Auto-refresh every 30 seconds while panel is open
   useEffect(() => {
     if (!isOpen || !userAddress) return;
 
-    const fetchPayrolls = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const response = await fetch(`${AGENT_API_URL}/api/payrolls/${userAddress}`);
-        if (!response.ok) throw new Error("Failed to fetch payrolls");
-        const data = await response.json();
-        setPayrolls(data);
-      } catch (err) {
-        setError((err as Error).message);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchPayrolls();
-  }, [isOpen, userAddress]);
+    const interval = setInterval(fetchPayrolls, AUTO_REFRESH_INTERVAL);
+    return () => clearInterval(interval);
+  }, [isOpen, userAddress, fetchPayrolls]);
 
   return (
     <>
@@ -66,12 +78,22 @@ export default function PayrollsPanel({ isOpen, onClose, userAddress }: Payrolls
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-border">
           <h2 className="text-lg font-bold text-gray-900 dark:text-foreground">My Payrolls</h2>
-          <button 
-            onClick={onClose}
-            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-accent transition-colors"
-          >
-            <X className="w-5 h-5 text-gray-500 dark:text-gray-400" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={fetchPayrolls}
+              disabled={isLoading}
+              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-accent transition-colors disabled:opacity-50"
+              title="Refresh payrolls"
+            >
+              <RefreshCw className={cn("w-5 h-5 text-gray-500 dark:text-gray-400", isLoading && "animate-spin")} />
+            </button>
+            <button 
+              onClick={onClose}
+              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-accent transition-colors"
+            >
+              <X className="w-5 h-5 text-gray-500 dark:text-gray-400" />
+            </button>
+          </div>
         </div>
 
         {/* Content */}
@@ -116,26 +138,32 @@ export default function PayrollsPanel({ isOpen, onClose, userAddress }: Payrolls
                 return (
                   <div
                     key={payroll.payrollId}
-                    className="bg-gray-50 dark:bg-muted border border-gray-200 dark:border-border rounded-lg p-4 hover:border-blue-300 dark:hover:border-blue-700 transition-colors"
+                    className="bg-gray-50 dark:bg-muted border border-gray-200 dark:border-border rounded-lg p-3 hover:border-blue-300 dark:hover:border-blue-700 transition-colors cursor-pointer"
                   >
-                    {/* Status Badge */}
-                    <div className="flex items-center justify-between mb-3">
+                    {/* Status Badge + Date */}
+                    <div className="flex items-center justify-between mb-2">
                       <span className={cn(
                         "text-xs font-medium px-2 py-1 rounded-full",
                         statusColors[payroll.status as keyof typeof statusColors] || statusColors.pending
                       )}>
                         {payroll.status.charAt(0).toUpperCase() + payroll.status.slice(1)}
                       </span>
-                      {payroll.txHash && (
-                        <a
-                          href={`https://sepolia.basescan.org/tx/${payroll.txHash}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600 dark:text-blue-400 hover:underline"
-                        >
-                          <ExternalLink className="w-4 h-4" />
-                        </a>
-                      )}
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                          {date.toLocaleDateString([], { month: 'short', day: 'numeric' })} {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        {payroll.txHash && (
+                          <a
+                            href={`https://sepolia.basescan.org/tx/${payroll.txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 dark:text-blue-400 hover:underline"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </a>
+                        )}
+                      </div>
                     </div>
 
                     {/* Amount */}
@@ -144,12 +172,6 @@ export default function PayrollsPanel({ isOpen, onClose, userAddress }: Payrolls
                       <span className="text-lg font-bold text-gray-900 dark:text-foreground">
                         ${amount} USDC
                       </span>
-                    </div>
-
-                    {/* Date */}
-                    <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 mb-2">
-                      <Clock className="w-4 h-4" />
-                      <span>{date.toLocaleDateString()} at {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
 
                     {/* Recipients */}
