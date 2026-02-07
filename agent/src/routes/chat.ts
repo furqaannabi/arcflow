@@ -543,10 +543,20 @@ async function executeTool(
         return { result: JSON.stringify({ error: "Total amount not calculated" }), updatedPayroll: updated };
       }
 
-      // Pre-flight checks: verify balance and allowance before generating tx
+      // Pre-flight checks: verify pool liquidity, balance, and allowance
       const totalAmountBigInt = BigInt(updated.totalAmount);
       const totalAmountFormatted = (Number(totalAmountBigInt) / 1e6).toFixed(2);
       try {
+        const poolLiquidity = await contractService.getPoolLiquidity();
+        if (poolLiquidity === BigInt(0)) {
+          return {
+            result: JSON.stringify({
+              error: "The Uniswap V4 pool has no liquidity. The pool must be seeded before deposits can be made. Please ask the contract owner to call router.seed() first.",
+            }),
+            updatedPayroll: updated,
+          };
+        }
+
         const balance = await contractService.getUsdcBalance(userAddress);
         const allowance = await contractService.getAllowance(userAddress);
         const balanceBigInt = parseUnits(balance, 6);

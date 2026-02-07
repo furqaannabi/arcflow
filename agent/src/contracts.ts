@@ -5,19 +5,45 @@ import {
   parseUnits,
   formatUnits,
   encodeFunctionData,
+  encodeAbiParameters,
+  encodePacked,
+  keccak256,
+  toHex,
+  pad,
   type Address,
+  type Hex,
 } from "viem";
 import { baseSepolia } from "viem/chains";
 import addressesJson from "./addresses.json" with { type: "json" };
 import abis from "./abis.json" with { type: "json" };
 
 const ADDRESSES = {
+  poolManager: addressesJson.baseSepolia.poolManager as Address,
   router: addressesJson.baseSepolia.router as Address,
   stateManager: addressesJson.baseSepolia.stateManager as Address,
   migration: addressesJson.baseSepolia.migration as Address,
   usdc: addressesJson.baseSepolia.usdc as Address,
   usdt: addressesJson.baseSepolia.usdt as Address,
 };
+
+// Pool key params (must match deployment: fee=500, tickSpacing=10, no hooks)
+const POOL_FEE = 500;
+const POOL_TICK_SPACING = 10;
+const POOL_HOOKS = "0x0000000000000000000000000000000000000000" as Address;
+
+// Uniswap V4 StateLibrary constants
+const POOLS_SLOT = pad(toHex(6), { size: 32 }) as Hex; // mapping slot in PoolManager
+const LIQUIDITY_OFFSET = 3n;
+
+const EXTSLOAD_ABI = [
+  {
+    name: "extsload",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "slot", type: "bytes32" }],
+    outputs: [{ name: "", type: "bytes32" }],
+  },
+] as const;
 
 const ROUTER_ABI = abis.router;
 const ERC20_ABI = abis.erc20;
@@ -133,6 +159,49 @@ export class ContractService {
         args: [amount, payrollDate, recipients],
       }),
     };
+  }
+
+  /**
+   * Read pool liquidity directly from PoolManager via extsload,
+   * matching Uniswap V4 StateLibrary.getLiquidity(poolId).
+   */
+  async getPoolLiquidity(): Promise<bigint> {
+    // 1. Sort tokens to get currency0/currency1
+    const [currency0, currency1] =
+      ADDRESSES.usdc.toLowerCase() < ADDRESSES.usdt.toLowerCase()
+        ? [ADDRESSES.usdc, ADDRESSES.usdt]
+        : [ADDRESSES.usdt, ADDRESSES.usdc];
+
+    // 2. Compute PoolId = keccak256(abi.encode(PoolKey))
+    const poolId = keccak256(
+      encodeAbiParameters(
+        [
+          { type: "address" },
+          { type: "address" },
+          { type: "uint24" },
+          { type: "int24" },
+          { type: "address" },
+        ],
+        [currency0, currency1, POOL_FEE, POOL_TICK_SPACING, POOL_HOOKS]
+      )
+    );
+
+    // 3. Compute pool state slot = keccak256(abi.encodePacked(poolId, POOLS_SLOT))
+    const stateSlot = keccak256(encodePacked(["bytes32", "bytes32"], [poolId, POOLS_SLOT]));
+
+    // 4. Liquidity slot = stateSlot + LIQUIDITY_OFFSET
+    const liquiditySlot = toHex(BigInt(stateSlot) + LIQUIDITY_OFFSET, { size: 32 }) as Hex;
+
+    // 5. Read via extsload on PoolManager
+    const raw = await this.client.readContract({
+      address: ADDRESSES.poolManager,
+      abi: EXTSLOAD_ABI,
+      functionName: "extsload",
+      args: [liquiditySlot],
+    });
+
+    // 6. Decode as uint128 (lower 128 bits)
+    return BigInt(raw) & ((1n << 128n) - 1n);
   }
 
   getAddresses() {

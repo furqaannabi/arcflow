@@ -85,6 +85,13 @@
         { "name": "sig", "type": "bytes" }
       ],
       "outputs": [{ "name": "amt", "type": "uint256" }]
+    },
+    {
+      "name": "totalLiquidity",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [{ "name": "", "type": "uint256" }]
     }
   ],
   "stateManager": [
