@@ -3,26 +3,18 @@ import {
   createWalletClient,
   http,
   type Address,
-  type Hash,
   type Chain,
-  encodeFunctionData,
-  keccak256,
-  encodeAbiParameters,
-  parseAbiParameters,
-  parseUnits,
 } from "viem";
-import { privateKeyToAccount, signMessage } from "viem/accounts";
+import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia, sepolia } from "viem/chains";
 import { DefiLlamaService } from "./defillama";
 import { getRpcUrl, CHAIN_IDS } from "./config";
-import { YellowChunkingService } from "./yellow";
 import addressesJson from "./addresses.json" with { type: "json" };
 import abis from "./abis.json" with { type: "json" };
 
 const ROUTER_ABI = abis.router;
 const STATE_MANAGER_ABI = abis.stateManager;
 const MIGRATION_ABI = abis.migration;
-const DISTRIBUTOR_ABI = abis.distributor;
 
 // Multi-chain configuration
 interface ChainConfig {
@@ -63,16 +55,6 @@ const ARC_CHAIN = {
   distributor: addressesJson.arcTestnet.distributor as Address,
 } as const;
 
-interface PendingDistribution {
-  payrollId: bigint;
-  provider: Address;
-  totalAmount: bigint;
-  payrollDate: bigint;
-  stateHash: string;
-  bridgeTxHash: string;
-  recipients: { wallet: Address; amount: bigint }[];
-}
-
 export interface CronResult {
   timestamp: Date;
   readyCount: number;
@@ -112,77 +94,19 @@ export interface RebalancingOpportunity {
  * Autonomous Payroll Cron - runs every minute, checks and executes ready payrolls
  * Also monitors APY across chains every 6 hours and handles rebalancing
  * Supports multiple chains (Base Sepolia, Sepolia)
- * Integrates with Yellow Network SDK for state channel execution
  */
 export class PayrollCron {
   private privateKey: string | undefined;
-  private alchemyApiKey: string | undefined;
   private intervalId: NodeJS.Timeout | null = null;
   private apyIntervalId: NodeJS.Timeout | null = null;
   private results: CronResult[] = [];
   private apyResults: ApyUpdateResult[] = [];
   private rebalanceResults: RebalanceResult[] = [];
   private defiLlamaService: DefiLlamaService;
-  private yellowService: YellowChunkingService;
-  private yellowInitialized: boolean = false;
-  private yellowInitAttempts: number = 0;
-  private readonly MAX_YELLOW_RETRIES = 3;
 
-  // Minimum APY difference to trigger rebalance (0.5% = 50 basis points)
-  private readonly MIN_APY_DIFF_FOR_REBALANCE = 0.5;
-
-  // Enable Yellow Network state channel execution
-  private useYellowChannels: boolean = true;
-
-  constructor(privateKey?: string, alchemyApiKey?: string) {
+  constructor(privateKey?: string) {
     this.privateKey = privateKey;
-    this.alchemyApiKey = alchemyApiKey || process.env.ALCHEMY_API_KEY;
     this.defiLlamaService = new DefiLlamaService();
-    this.yellowService = new YellowChunkingService(privateKey, this.alchemyApiKey);
-  }
-
-  /**
-   * Initialize Yellow Network SDK connection
-   * Stops retrying after MAX_YELLOW_RETRIES failures
-   */
-  async initializeYellowSDK(): Promise<void> {
-    if (this.yellowInitialized) {
-      return;
-    }
-
-    if (this.yellowInitAttempts >= this.MAX_YELLOW_RETRIES) {
-      return;
-    }
-
-    this.yellowInitAttempts++;
-
-    try {
-      console.log(`[CRON] Initializing Yellow Network SDK (attempt ${this.yellowInitAttempts}/${this.MAX_YELLOW_RETRIES})...`);
-      await this.yellowService.initializeSDK();
-      this.yellowInitialized = true;
-      console.log("[CRON] Yellow Network SDK ready");
-    } catch (error) {
-      const msg = (error as Error).message;
-      console.error(`[CRON] Yellow SDK init failed: ${msg}`);
-      if (this.yellowInitAttempts >= this.MAX_YELLOW_RETRIES) {
-        console.log("[CRON] Yellow SDK max retries reached - falling back to direct execution");
-        this.useYellowChannels = false;
-      }
-    }
-  }
-
-  /**
-   * Check if Yellow SDK is ready for channel operations
-   */
-  isYellowReady(): boolean {
-    return this.yellowInitialized && this.yellowService.isSDKReady();
-  }
-
-  /**
-   * Get Yellow service instance
-   */
-  getYellowService(): YellowChunkingService {
-    return this.yellowService;
   }
 
   /**
@@ -248,24 +172,23 @@ export class PayrollCron {
   }
 
   /**
-   * Execute payroll via Yellow Network state channel (REQUIRED)
-   * Direct execution is disabled - all payrolls must go through Yellow
+   * Execute a ready payroll directly via the router contract
    */
-  async executePayrollViaYellow(payrollId: bigint): Promise<{
-    channelId: string;
-    settled: boolean;
-    txHash?: string;
-  }> {
-    if (!this.isYellowReady()) {
-      throw new Error("Yellow Network not initialized - cannot execute payroll");
-    }
+  async executePayroll(chainConfig: ChainConfig, payrollId: bigint): Promise<string> {
+    const walletClient = this.getWalletClient(chainConfig);
 
-    return await this.yellowService.executePayrollViaChannel(payrollId);
+    const hash = await walletClient.writeContract({
+      address: chainConfig.router,
+      abi: ROUTER_ABI,
+      functionName: "execute",
+      args: [payrollId],
+    });
+
+    return hash;
   }
 
   /**
    * Single cron tick - check and execute ready payrolls
-   * Tries Yellow Network first, falls back to logging ready payrolls
    */
   async tick(): Promise<CronResult> {
     const result: CronResult = {
@@ -275,11 +198,6 @@ export class PayrollCron {
     };
 
     try {
-      // Try Yellow init only if we haven't exhausted retries
-      if (!this.isYellowReady() && this.privateKey && this.yellowInitAttempts < this.MAX_YELLOW_RETRIES) {
-        await this.initializeYellowSDK();
-      }
-
       const allChainResults = await this.checkReadyPayrolls();
 
       for (const chainResult of allChainResults) {
@@ -288,23 +206,22 @@ export class PayrollCron {
         if (chainResult.readyIds.length > 0) {
           console.log(`[CRON] ${chainResult.chainName}: Found ${chainResult.readyIds.length} ready payroll(s): ${chainResult.readyIds.map(id => id.toString()).join(", ")}`);
 
-          if (this.privateKey && this.isYellowReady()) {
-            // Execute each payroll via Yellow Network state channels
+          if (this.privateKey) {
+            const chainConfig = CHAIN_CONFIGS.find(c => c.id === chainResult.chainId)!;
             for (const payrollId of chainResult.readyIds) {
               try {
-                console.log(`[CRON] Executing payroll #${payrollId} via Yellow Network...`);
-                const yellowResult = await this.executePayrollViaYellow(payrollId);
+                console.log(`[CRON] Executing payroll #${payrollId} on ${chainResult.chainName}...`);
+                const txHash = await this.executePayroll(chainConfig, payrollId);
                 result.executed = true;
-                result.txHash = yellowResult.txHash;
-                console.log(`[CRON] Payroll #${payrollId} executed via channel ${yellowResult.channelId}`);
+                result.txHash = txHash;
+                console.log(`[CRON] Payroll #${payrollId} executed: ${txHash}`);
               } catch (error) {
                 console.error(`[CRON] Failed to execute payroll #${payrollId}:`, (error as Error).message);
               }
             }
-          } else if (!this.privateKey) {
+          } else {
             console.log("[CRON] No private key configured - skipping execution");
           }
-          // When Yellow is unavailable, just log (no spam) - payrolls stay ready for next attempt
         }
       }
     } catch (error) {
@@ -314,7 +231,7 @@ export class PayrollCron {
 
     this.results.push(result);
     if (this.results.length > 100) {
-      this.results.shift(); // Keep last 100 results
+      this.results.shift();
     }
 
     return result;
@@ -453,28 +370,24 @@ export class PayrollCron {
   }
 
   /**
-   * Execute migration via Yellow Network state channel (REQUIRED)
-   * Direct migration is disabled - all migrations must go through Yellow
+   * Execute migration directly via the migration contract
    */
-  async executeMigrateViaYellow(
+  async executeMigration(
     chainConfig: ChainConfig,
     payrollId: bigint,
     targetChainId: bigint
-  ): Promise<{ channelId: string; txHash?: string }> {
-    if (!this.isYellowReady()) {
-      throw new Error("Yellow Network not initialized - cannot migrate");
-    }
+  ): Promise<string> {
+    const walletClient = this.getWalletClient(chainConfig);
 
-    console.log(`[REBALANCE] Migrating payroll #${payrollId} via Yellow Network...`);
+    const hash = await walletClient.writeContract({
+      address: chainConfig.migration,
+      abi: MIGRATION_ABI,
+      functionName: "migrateOut",
+      args: [payrollId, targetChainId],
+    });
 
-    // Execute migration through Yellow Network channel
-    const result = await this.yellowService.executePayrollViaChannel(payrollId);
-
-    console.log(`[REBALANCE] Migration executed via channel ${result.channelId}`);
-    return {
-      channelId: result.channelId,
-      txHash: result.txHash,
-    };
+    console.log(`[REBALANCE] Migration TX: ${hash}`);
+    return hash;
   }
 
   /**
@@ -539,11 +452,10 @@ export class PayrollCron {
                 const apyDiffPercent = Number(result.apyDiff) / 100;
                 console.log(`[REBALANCE] ${chainConfig.name}: Payroll #${payrollId} should migrate to chain ${result.targetChain} (APY diff: +${apyDiffPercent.toFixed(2)}%)`);
 
-                // Migration REQUIRES Yellow Network
-                if (this.privateKey && this.isYellowReady()) {
+                if (this.privateKey) {
                   try {
-                    const yellowResult = await this.executeMigrateViaYellow(chainConfig, payrollId, result.targetChain);
-                    console.log(`[REBALANCE] ${chainConfig.name}: Migration via Yellow! Channel: ${yellowResult.channelId}`);
+                    const txHash = await this.executeMigration(chainConfig, payrollId, result.targetChain);
+                    console.log(`[REBALANCE] ${chainConfig.name}: Migration executed: ${txHash}`);
 
                     this.rebalanceResults.push({
                       timestamp: new Date(),
@@ -552,13 +464,13 @@ export class PayrollCron {
                       toChain: Number(result.targetChain),
                       amount: BigInt(0),
                       apyDiff: apyDiffPercent,
-                      txHash: yellowResult.txHash,
+                      txHash,
                     });
                   } catch (error) {
-                    console.error(`[REBALANCE] Yellow migration failed:`, (error as Error).message);
+                    console.error(`[REBALANCE] Migration failed:`, (error as Error).message);
                   }
-                } else if (!this.isYellowReady()) {
-                  console.log("[REBALANCE] Yellow Network not available - cannot migrate");
+                } else {
+                  console.log("[REBALANCE] No private key - cannot migrate");
                 }
               }
             } catch (error) {
@@ -609,13 +521,6 @@ export class PayrollCron {
       console.log(`[CRON]   - ${chain.name}: Router ${chain.router}`);
     }
     console.log(`[CRON] Auto-execute: ${this.privateKey ? "enabled" : "disabled (no private key)"}`);
-
-    // Initialize Yellow Network SDK if private key is available
-    if (this.privateKey && this.useYellowChannels) {
-      await this.initializeYellowSDK();
-    }
-
-    console.log(`[CRON] Yellow Network channels: ${this.isYellowReady() ? "enabled" : "disabled"}`);
 
     // Run immediately
     this.tick();
@@ -698,10 +603,9 @@ export class PayrollCron {
  */
 export async function startStandaloneCron() {
   const privateKey = process.env.AGENT_PRIVATE_KEY;
-  const alchemyApiKey = process.env.ALCHEMY_API_KEY;
   const interval = parseInt(process.env.CRON_INTERVAL || "60000");
 
-  const cron = new PayrollCron(privateKey, alchemyApiKey);
+  const cron = new PayrollCron(privateKey);
   await cron.start(interval);
 
   // Graceful shutdown

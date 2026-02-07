@@ -262,17 +262,24 @@ export class ContractService {
     return ready;
   }
 
-  generateSettleCalldata(
-    payrollId: bigint,
-    channelId: `0x${string}`,
-    signature: `0x${string}`
-  ) {
+  generateCancelCalldata(payrollId: bigint) {
     return {
       to: ADDRESSES.router,
       data: encodeFunctionData({
         abi: ROUTER_ABI,
-        functionName: "settle",
-        args: [payrollId, channelId, signature],
+        functionName: "cancel",
+        args: [payrollId],
+      }),
+    };
+  }
+
+  generateExecuteCalldata(payrollId: bigint) {
+    return {
+      to: ADDRESSES.router,
+      data: encodeFunctionData({
+        abi: ROUTER_ABI,
+        functionName: "execute",
+        args: [payrollId],
       }),
     };
   }

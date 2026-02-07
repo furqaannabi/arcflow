@@ -21,9 +21,10 @@ contract ArcFlowRouter is ArcFlowBase {
     error NoPosition();
     error NotReady();
     error WrongChain();
-    error InvalidChannelState();
     error AlreadySeeded();
     error NotMigration();
+    error NotProvider();
+    error NotOnThisChain();
 
     event Deposited(
         uint256 indexed payrollId,
@@ -39,10 +40,15 @@ contract ArcFlowRouter is ArcFlowBase {
         uint256 yieldAmt
     );
 
-    event ChannelSettled(
+    event Executed(
         uint256 indexed payrollId,
-        bytes32 indexed channelId,
         uint256 amount
+    );
+
+    event Cancelled(
+        uint256 indexed payrollId,
+        address indexed provider,
+        uint256 amountReturned
     );
 
     mapping(address => uint256) public providerYield;
@@ -200,29 +206,49 @@ contract ArcFlowRouter is ArcFlowBase {
         IERC20(t).safeTransfer(owner, a);
     }
 
-    function settle(
-        uint256 pid,
-        bytes32 cid,
-        bytes calldata sig
+    function execute(
+        uint256 pid
     ) external onlyAgent returns (uint256 amt) {
-        LPPosition memory p = positions[pid];
-        if (p.liquidity == 0) revert NoPosition();
-        if (block.timestamp < p.payrollDate) revert NotReady();
-        if (p.currentChainId != chainId) revert WrongChain();
-
-        bytes32 h = keccak256(
-            abi.encodePacked(cid, pid, p.usdcDeposited, p.recipientsHash)
-        );
-
-        if (!stateManager.verifyChannelState(h, sig))
-            revert InvalidChannelState();
-
         amt = _withdraw(pid);
-        stateManager.recordChannelSettlement(cid, pid, amt);
         usdc.approve(address(gatewayWallet), amt);
         gatewayWallet.deposit(address(usdc), amt);
+        emit Executed(pid, amt);
+    }
 
-        emit ChannelSettled(pid, cid, amt);
+    function cancel(uint256 pid) external returns (uint256 amt) {
+        LPPosition storage p = positions[pid];
+        if (p.provider != msg.sender) revert NotProvider();
+        if (p.liquidity == 0) revert NoPosition();
+        if (p.currentChainId != chainId) revert NotOnThisChain();
+        if (block.timestamp >= p.payrollDate) revert NotReady();
+
+        uint128 liq = p.liquidity;
+        (uint256 u0, uint256 u1) = _removeLiquidity(liq);
+        if (u1 > 0) u0 += _swap(false, u1);
+        amt = u0;
+
+        totalLiquidity -= liq;
+        address provider = p.provider;
+
+        delete positions[pid];
+        _removePayroll(pid);
+        _removeFromProviderPayrolls(provider, pid);
+
+        usdc.safeTransfer(provider, amt);
+        emit Cancelled(pid, provider, amt);
+    }
+
+    function getPosData(
+        uint256 pid
+    ) external view returns (uint128, uint256, uint256) {
+        LPPosition storage p = positions[pid];
+        return (p.liquidity, p.currentChainId, p.payrollDate);
+    }
+
+    function getProviderPayrolls(
+        address p
+    ) external view returns (uint256[] memory) {
+        return providerPayrolls[p];
     }
 
     function seed(uint256 a0, uint256 a1) external onlyOwner {

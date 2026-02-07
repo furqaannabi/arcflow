@@ -3,8 +3,6 @@ pragma solidity ^0.8.24;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {ArcFlowStateManager} from "./ArcFlowStateManager.sol";
 import {IGatewayWallet, IGatewayMinter} from "./interfaces/ICircleGateway.sol";
 import {MigrationStatus} from "./structs/CrossChainStructs.sol";
@@ -18,8 +16,6 @@ interface IArcFlowRouter {
 
 contract ArcFlowMigration {
     using SafeERC20 for IERC20;
-    using ECDSA for bytes32;
-    using MessageHashUtils for bytes32;
 
     error Unauthorized();
     error NoPosition();
@@ -27,21 +23,18 @@ contract ArcFlowMigration {
     error SameChain();
     error TooCloseToPayroll();
     error HasLiquidity();
-    error InvalidChannelSignature();
     error InsufficientMint();
 
     event MigrationOut(
         uint256 indexed payrollId,
         uint256 toChainId,
-        uint256 amount,
-        bytes32 channelId
+        uint256 amount
     );
 
     event MigrationIn(
         uint256 indexed payrollId,
         uint256 fromChainId,
-        uint256 amount,
-        bytes32 channelId
+        uint256 amount
     );
 
     IArcFlowRouter public immutable router;
@@ -86,11 +79,9 @@ contract ArcFlowMigration {
     // MIGRATE OUT
     // =============================================================
 
-    function migrateOutViaChannel(
+    function migrateOut(
         uint256 payrollId,
-        uint256 targetChainId,
-        bytes32 channelId,
-        bytes calldata channelSignature
+        uint256 targetChainId
     ) external onlyAgent returns (uint256 amount) {
         (
             uint128 liquidity,
@@ -107,22 +98,10 @@ contract ArcFlowMigration {
         // 1. Remove liquidity
         amount = router.removeLiqFor(payrollId);
 
-        // 2. Verify Yellow channel signature using REAL amount
-        bytes32 stateHash = keccak256(
-            abi.encodePacked(channelId, payrollId, amount)
-        );
-
-        bytes32 ethSignedHash = stateHash.toEthSignedMessageHash();
-        address signer = ethSignedHash.recover(channelSignature);
-
-        if (signer != agent && signer != owner)
-            revert InvalidChannelSignature();
-
-        // 3. Update router state
+        // 2. Update router state
         router.updatePosChain(payrollId, targetChainId);
 
-        // 4. Record migration state
-        stateManager.recordChannelSettlement(channelId, payrollId, amount);
+        // 3. Record migration state
         stateManager.updateMigrationState(
             payrollId,
             amount,
@@ -131,23 +110,21 @@ contract ArcFlowMigration {
             MigrationStatus.PENDING
         );
 
-        // 5. Bridge via Circle Gateway
+        // 4. Bridge via Circle Gateway
         usdc.approve(address(gatewayWallet), amount);
         gatewayWallet.deposit(address(usdc), amount);
 
-        emit MigrationOut(payrollId, targetChainId, amount, channelId);
+        emit MigrationOut(payrollId, targetChainId, amount);
     }
 
     // =============================================================
     // MIGRATE IN
     // =============================================================
 
-    function migrateInViaChannel(
+    function migrateIn(
         uint256 payrollId,
         uint256 fromChainId,
         uint256 amount,
-        bytes32 channelId,
-        bytes calldata channelSignature,
         bytes calldata attestation,
         bytes calldata gatewaySignature
     ) external onlyAgent returns (uint128 newLiquidity) {
@@ -159,30 +136,18 @@ contract ArcFlowMigration {
         if (currentChain != chainId) revert WrongChain();
         if (liquidity != 0) revert HasLiquidity();
 
-        // 1. Verify channel signature
-        bytes32 stateHash = keccak256(
-            abi.encodePacked(channelId, payrollId, amount)
-        );
-
-        bytes32 ethSignedHash = stateHash.toEthSignedMessageHash();
-        address signer = ethSignedHash.recover(channelSignature);
-
-        if (signer != agent && signer != owner)
-            revert InvalidChannelSignature();
-
-        // 2. Mint via Circle Gateway
+        // 1. Mint via Circle Gateway
         uint256 beforeBal = usdc.balanceOf(address(this));
         gatewayMinter.gatewayMint(attestation, gatewaySignature);
         uint256 minted = usdc.balanceOf(address(this)) - beforeBal;
 
         if (minted < amount) revert InsufficientMint();
 
-        // 3. Add liquidity back
+        // 2. Add liquidity back
         usdc.safeTransfer(address(router), amount);
         newLiquidity = router.addLiqFor(payrollId, amount);
 
-        // 4. Record migration completion
-        stateManager.recordChannelSettlement(channelId, payrollId, amount);
+        // 3. Record migration completion
         stateManager.updateMigrationState(
             payrollId,
             amount,
@@ -191,7 +156,7 @@ contract ArcFlowMigration {
             MigrationStatus.COMPLETED
         );
 
-        emit MigrationIn(payrollId, fromChainId, amount, channelId);
+        emit MigrationIn(payrollId, fromChainId, amount);
     }
 
     // =============================================================

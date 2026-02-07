@@ -6,7 +6,6 @@ import { isAddress, getAddress, parseUnits, type Address } from "viem";
 import { v4 as uuidv4 } from "uuid";
 import { ContractService, type PayrollRecipient } from "../contracts";
 import { DefiLlamaService } from "../defillama";
-import { YellowNetworkService } from "../yellow";
 import { ChatSession, type IMessage, type IPendingPayroll } from "../models/ChatSession";
 import { Payroll } from "../models/Payroll";
 
@@ -33,7 +32,6 @@ const openai = new OpenAI({
 
 const contractService = new ContractService(process.env.RPC_URL);
 const defiLlamaService = new DefiLlamaService();
-const yellowService = new YellowNetworkService(process.env.RPC_URL);
 
 // Tool definitions for OpenAI function calling
 const tools: OpenAI.Chat.ChatCompletionTool[] = [
@@ -200,40 +198,6 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
-      name: "get_withdrawable_balance",
-      description: "Get withdrawable USDC balance from Yellow Network Custody Contract after closing a state channel",
-      parameters: {
-        type: "object",
-        properties: {
-          address: {
-            type: "string",
-            description: "User's wallet address",
-          },
-        },
-        required: ["address"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "get_withdrawal_transaction",
-      description: "Generate transaction to withdraw USDC from Yellow Network Custody Contract",
-      parameters: {
-        type: "object",
-        properties: {
-          amount: {
-            type: "string",
-            description: "USDC amount to withdraw",
-          },
-        },
-        required: ["amount"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
       name: "get_user_address",
       description: "Get the connected wallet address of the current user. Use this whenever you need the user's address instead of asking them for it.",
       parameters: {
@@ -310,6 +274,40 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
           },
         },
         required: ["txHash"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_cancellable_payrolls",
+      description: "Get all active payrolls for a user that can potentially be cancelled (payroll date has NOT passed yet). Shows whether each is directly cancellable or needs migration back first.",
+      parameters: {
+        type: "object",
+        properties: {
+          address: {
+            type: "string",
+            description: "User's wallet address",
+          },
+        },
+        required: ["address"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_cancel_transaction",
+      description: "Generate a transaction to cancel a payroll and return USDC to the employer. The payroll must be on the current chain and the payroll date must not have passed yet.",
+      parameters: {
+        type: "object",
+        properties: {
+          payrollId: {
+            type: "string",
+            description: "The payroll ID to cancel",
+          },
+        },
+        required: ["payrollId"],
       },
     },
   },
@@ -706,42 +704,6 @@ async function executeTool(
       }
     }
 
-    case "get_withdrawable_balance": {
-      const address = args.address as Address;
-      try {
-        const withdrawable = await yellowService.getWithdrawableBalance(address);
-        return {
-          result: JSON.stringify({
-            address: withdrawable.address,
-            withdrawableBalance: withdrawable.balance,
-            token: withdrawable.token,
-            custodyContract: yellowService.getCustodyAddress(),
-          }),
-          updatedPayroll: updated,
-        };
-      } catch (error) {
-        return { result: JSON.stringify({ error: (error as Error).message }), updatedPayroll: updated };
-      }
-    }
-
-    case "get_withdrawal_transaction": {
-      const amount = args.amount as string;
-      try {
-        const amountBigInt = parseUnits(amount, 6);
-        const txData = yellowService.generateWithdrawCalldata(amountBigInt);
-        return {
-          result: JSON.stringify({
-            to: txData.to,
-            data: txData.data,
-            description: txData.description,
-          }),
-          updatedPayroll: updated,
-        };
-      } catch (error) {
-        return { result: JSON.stringify({ error: (error as Error).message }), updatedPayroll: updated };
-      }
-    }
-
     case "get_user_address": {
       if (!updated.userAddress) {
         return {
@@ -800,10 +762,9 @@ async function executeTool(
         const readyIds = await contractService.getReadyPayrolls();
         return {
           result: JSON.stringify({
-            info: "Payroll execution now requires Yellow Network state channels",
             readyCount: readyIds.length,
             message: readyIds.length > 0
-              ? `${readyIds.length} payroll(s) ready. The agent will automatically execute them via Yellow Network.`
+              ? `${readyIds.length} payroll(s) ready. The agent will automatically execute them.`
               : "No payrolls ready to execute yet.",
           }),
           updatedPayroll: updated,
@@ -895,6 +856,86 @@ async function executeTool(
       }
     }
 
+    case "get_cancellable_payrolls": {
+      const address = args.address as Address;
+      try {
+        const positions = await contractService.getPositions(address);
+        const now = Math.floor(Date.now() / 1000);
+        const BASE_SEPOLIA_CHAIN_ID = 84532n;
+
+        const cancellable = positions
+          .filter((p) => Number(p.payrollDate) > now && p.liquidity > 0n)
+          .map((p) => ({
+            payrollId: p.payrollId.toString(),
+            usdcDeposited: (Number(p.usdcDeposited) / 1e6).toFixed(2),
+            payrollDate: new Date(Number(p.payrollDate) * 1000).toISOString(),
+            currentChainId: p.currentChainId.toString(),
+            onCurrentChain: p.currentChainId === BASE_SEPOLIA_CHAIN_ID,
+            cancellable: p.currentChainId === BASE_SEPOLIA_CHAIN_ID,
+            needsMigrationBack: p.currentChainId !== BASE_SEPOLIA_CHAIN_ID,
+          }));
+
+        return {
+          result: JSON.stringify({
+            count: cancellable.length,
+            payrolls: cancellable,
+            message: cancellable.length > 0
+              ? `${cancellable.length} payroll(s) can be cancelled`
+              : "No active payrolls found that can be cancelled",
+          }),
+          updatedPayroll: updated,
+        };
+      } catch (error) {
+        return { result: JSON.stringify({ error: (error as Error).message }), updatedPayroll: updated };
+      }
+    }
+
+    case "get_cancel_transaction": {
+      const payrollId = BigInt(args.payrollId as string);
+      try {
+        const pos = await contractService.getPos(payrollId);
+        const now = Math.floor(Date.now() / 1000);
+        const BASE_SEPOLIA_CHAIN_ID = 84532n;
+
+        if (pos.liquidity === 0n) {
+          return {
+            result: JSON.stringify({ error: "This payroll has no liquidity — it may already be executed or in migration." }),
+            updatedPayroll: updated,
+          };
+        }
+
+        if (Number(pos.payrollDate) <= now) {
+          return {
+            result: JSON.stringify({ error: "Cannot cancel — the payroll date has already passed. This payroll is ready for execution." }),
+            updatedPayroll: updated,
+          };
+        }
+
+        if (pos.currentChainId !== BASE_SEPOLIA_CHAIN_ID) {
+          return {
+            result: JSON.stringify({
+              error: `This payroll is currently on chain ${pos.currentChainId.toString()}. It needs to be migrated back to Base Sepolia before it can be cancelled. The agent will handle this automatically.`,
+              needsMigrationBack: true,
+              currentChainId: pos.currentChainId.toString(),
+            }),
+            updatedPayroll: updated,
+          };
+        }
+
+        const txData = contractService.generateCancelCalldata(payrollId);
+        return {
+          result: JSON.stringify({
+            to: txData.to,
+            data: txData.data,
+            description: `Cancel payroll #${payrollId} and return ~${(Number(pos.usdcDeposited) / 1e6).toFixed(2)} USDC to your wallet`,
+          }),
+          updatedPayroll: updated,
+        };
+      } catch (error) {
+        return { result: JSON.stringify({ error: (error as Error).message }), updatedPayroll: updated };
+      }
+    }
+
     default:
       return { result: JSON.stringify({ error: "Unknown tool: " + name }), updatedPayroll: updated };
   }
@@ -927,11 +968,10 @@ Your capabilities:
 3. Show expected yields from Uniswap V4 LP positions (using live data)
 4. Generate blockchain transactions for USDC approval and deposit into Uniswap V4
 5. Track existing LP positions and accumulated yields
-6. Check withdrawable balances from Yellow Network Custody Contract
-7. Generate withdrawal transactions from Yellow Network
-8. Check which payrolls are ready to execute (payroll date has passed)
-9. Generate transactions to execute ready payrolls and bridge USDC
-10. Look up stored payrolls for an employer, including recipients and status
+6. Check which payrolls are ready to execute (payroll date has passed)
+7. Generate transactions to execute ready payrolls and bridge USDC
+8. Look up stored payrolls for an employer, including recipients and status
+9. Cancel a payroll before its scheduled date and return USDC to the employer
 
 Workflow for new payroll:
 1. Greet the user and ask how you can help
@@ -944,12 +984,15 @@ Workflow for new payroll:
 
 Workflow for payroll execution (when payroll date arrives):
 1. Check for ready payrolls using get_ready_payrolls
-2. If payrolls are ready, generate execute transaction
+2. If payrolls are ready, the agent will automatically execute them
 3. Execution will remove liquidity from Uniswap V4, swap to USDC, and bridge to Arc Chain
 
-Workflow for withdrawal (after payroll distribution):
-1. Check withdrawable balance from Yellow Network Custody
-2. Generate withdrawal transaction to retrieve funds
+Workflow for cancelling a payroll:
+1. Call get_cancellable_payrolls with the user's address to see which payrolls can be cancelled
+2. If the payroll is on the current chain, call get_cancel_transaction to generate the cancel transaction
+3. If the payroll was migrated to another chain, inform the user it needs to be migrated back first — the agent will handle this automatically
+4. Cancellation removes liquidity from the pool and returns USDC directly to the employer's wallet
+5. A payroll can only be cancelled BEFORE the payroll date — once the date passes it will be executed
 
 Always be helpful, concise, and guide users through the process step by step.
 Format currency amounts clearly (e.g., "1,000 USDC").
@@ -1090,8 +1133,8 @@ router.post("/chat", upload.single("file"), async (req: Request, res: Response) 
     const TX_TOOLS = new Set([
       "get_approval_transaction",
       "get_deposit_transaction",
-      "get_withdrawal_transaction",
       "get_execute_payrolls_transaction",
+      "get_cancel_transaction",
     ]);
 
     // Tool call loop (non-streaming — tools need full response)
