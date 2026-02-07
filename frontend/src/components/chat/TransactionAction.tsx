@@ -87,9 +87,25 @@ export default function TransactionAction({ to, data, description, value = "0", 
     );
   }
 
+  // Determine transaction type from description
+  const getTransactionType = () => {
+    const lowerDesc = description.toLowerCase();
+    if (lowerDesc.includes("approve") || lowerDesc.includes("approval")) return "APPROVAL";
+    if (lowerDesc.includes("deposit")) return "DEPOSIT";
+    if (lowerDesc.includes("withdraw")) return "WITHDRAWAL";
+    return "TRANSACTION";
+  };
+
+  const txType = getTransactionType();
+
   return (
     <div className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg p-4 mt-2 shadow-sm transition-colors">
-      <h4 className="font-semibold text-gray-900 dark:text-foreground mb-2">Action Required</h4>
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-xs font-bold uppercase tracking-wide text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-2 py-0.5 rounded">
+          {txType}
+        </span>
+        <h4 className="font-semibold text-gray-900 dark:text-foreground">Action Required</h4>
+      </div>
       <p className="text-sm text-gray-600 dark:text-muted-foreground mb-4">{description}</p>
       
       <div className="bg-gray-50 dark:bg-muted rounded p-3 mb-4 text-xs font-mono text-gray-500 dark:text-muted-foreground overflow-hidden">
