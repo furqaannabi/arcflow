@@ -296,6 +296,23 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "verify_transaction",
+      description: "Verify a transaction on-chain by its hash. Call this EVERY TIME the user sends a transaction hash (0x...) or says 'Transaction approved'. This checks if the transaction succeeded on-chain.",
+      parameters: {
+        type: "object",
+        properties: {
+          txHash: {
+            type: "string",
+            description: "Transaction hash (0x...)",
+          },
+        },
+        required: ["txHash"],
+      },
+    },
+  },
 ];
 
 // Helper to convert MongoDB pending payroll to contract format
@@ -826,6 +843,58 @@ async function executeTool(
       }
     }
 
+    case "verify_transaction": {
+      const txHash = args.txHash as `0x${string}`;
+      try {
+        const receipt = await contractService.getTransactionReceipt(txHash);
+        if (!receipt) {
+          return {
+            result: JSON.stringify({
+              status: "pending",
+              message: "Transaction not found yet. It may still be processing.",
+              txHash,
+            }),
+            updatedPayroll: updated,
+          };
+        }
+
+        const isDeposit = receipt.to?.toLowerCase() === contractService.getAddresses().router.toLowerCase();
+        const isApproval = receipt.to?.toLowerCase() === contractService.getAddresses().usdc.toLowerCase();
+
+        // If deposit succeeded, update stored payroll status
+        if (receipt.status === "success" && isDeposit && updated.recipients) {
+          try {
+            const { Payroll } = await import("../models/Payroll");
+            await Payroll.findOneAndUpdate(
+              { employerWallet: updated.userAddress, status: "pending" },
+              { status: "deposited", txHash },
+              { sort: { createdAt: -1 } }
+            );
+          } catch {}
+        }
+
+        return {
+          result: JSON.stringify({
+            status: receipt.status,
+            confirmed: receipt.status === "success",
+            txHash,
+            blockNumber: receipt.blockNumber.toString(),
+            type: isDeposit ? "deposit" : isApproval ? "approval" : "unknown",
+            payrollDate: updated.payrollDate
+              ? new Date(updated.payrollDate * 1000).toISOString()
+              : null,
+            recipientCount: updated.recipients?.length || 0,
+            totalAmountUsdc: updated.totalAmount
+              ? (Number(BigInt(updated.totalAmount)) / 1e6).toFixed(2)
+              : null,
+          }),
+          updatedPayroll: updated,
+        };
+      } catch (error) {
+        return { result: JSON.stringify({ error: (error as Error).message }), updatedPayroll: updated };
+      }
+    }
+
     default:
       return { result: JSON.stringify({ error: "Unknown tool: " + name }), updatedPayroll: updated };
   }
@@ -885,8 +954,17 @@ Workflow for withdrawal (after payroll distribution):
 Always be helpful, concise, and guide users through the process step by step.
 Format currency amounts clearly (e.g., "1,000 USDC").
 
+TRANSACTION VERIFICATION:
+**CRITICAL** - When the user sends a transaction hash (0x...) or says "Transaction approved":
+1. You MUST call verify_transaction with the tx hash to check on-chain status BEFORE responding.
+2. If the transaction is confirmed (status: "success"):
+   - For DEPOSIT: Respond with the celebration message below.
+   - For APPROVAL: Acknowledge and immediately generate the deposit transaction.
+3. If the transaction FAILED (status: "reverted"): Tell the user it failed and suggest retrying.
+4. If still pending: Tell the user to wait and try again in a moment.
+
 COMPLETION MESSAGES:
-**CRITICAL** - When the user sends a message containing "Transaction approved" or a transaction hash (0x...) after a DEPOSIT transaction:
+**CRITICAL** - After verify_transaction confirms a DEPOSIT succeeded on-chain:
 1. You MUST respond with "🎉 **Your payroll has been successfully set up!**"
 2. You MUST include a summary with:
    - Total amount deposited (e.g., "2.00 USDC")

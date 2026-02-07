@@ -75,6 +75,25 @@ export class ContractService {
     });
   }
 
+  async getTransactionReceipt(txHash: `0x${string}`): Promise<{
+    status: "success" | "reverted";
+    blockNumber: bigint;
+    gasUsed: bigint;
+    to: Address | null;
+  } | null> {
+    try {
+      const receipt = await this.client.getTransactionReceipt({ hash: txHash });
+      return {
+        status: receipt.status,
+        blockNumber: receipt.blockNumber,
+        gasUsed: receipt.gasUsed,
+        to: receipt.to as Address | null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   async getUsdcBalance(address: Address): Promise<string> {
     const balance = await this.client.readContract({
       address: ADDRESSES.usdc,
