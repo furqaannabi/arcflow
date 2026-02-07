@@ -79,7 +79,7 @@ export default function ChatMessage({ role, content, timestamp, onTransactionSuc
         )}
       </div>
 
-      <div className={cn("flex flex-col max-w-[80%]", isUser ? "items-end" : "items-start")}>
+      <div className={cn("flex flex-col max-w-[80%] min-w-0", isUser ? "items-end" : "items-start")} style={{ maxWidth: 'min(80%, 600px)' }}>
         {/* Helper name */}
         <span className="text-xs text-gray-400 dark:text-gray-500 mb-1 px-1">
           {isUser ? "You" : "ArcFlow"}
@@ -93,7 +93,7 @@ export default function ChatMessage({ role, content, timestamp, onTransactionSuc
               : "bg-white dark:bg-card text-gray-800 dark:text-foreground rounded-tl-sm border border-gray-100 dark:border-border"
           )}
         >
-          <div className="markdown-content">
+          <div className="markdown-content break-words overflow-hidden">
             <ReactMarkdown 
               remarkPlugins={[remarkGfm]}
               components={{

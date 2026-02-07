@@ -76,12 +76,14 @@ export default function TransactionAction({ to, data, description, value = "0", 
       <h4 className="font-semibold text-gray-900 dark:text-foreground mb-2">Action Required</h4>
       <p className="text-sm text-gray-600 dark:text-muted-foreground mb-4">{description}</p>
       
-      <div className="bg-gray-50 dark:bg-muted rounded p-3 mb-4 text-xs font-mono text-gray-500 dark:text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap">
-        <div className="flex gap-2 mb-1">
-          <span className="font-bold">To:</span> {to}
+      <div className="bg-gray-50 dark:bg-muted rounded p-3 mb-4 text-xs font-mono text-gray-500 dark:text-muted-foreground overflow-hidden">
+        <div className="flex gap-2 mb-1 overflow-hidden">
+          <span className="font-bold shrink-0">To:</span>
+          <span className="truncate">{to}</span>
         </div>
-        <div className="flex gap-2">
-          <span className="font-bold">Data:</span> {data.slice(0, 10)}...{data.slice(-10)}
+        <div className="flex gap-2 overflow-hidden">
+          <span className="font-bold shrink-0">Data:</span>
+          <span className="truncate">{data.slice(0, 10)}...{data.slice(-10)}</span>
         </div>
       </div>
 
