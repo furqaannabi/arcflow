@@ -2,12 +2,13 @@ import { Router, Request, Response } from "express";
 import OpenAI from "openai";
 import multer from "multer";
 import { parse } from "csv-parse/sync";
-import { parseUnits, type Address } from "viem";
+import { isAddress, getAddress, parseUnits, type Address } from "viem";
 import { v4 as uuidv4 } from "uuid";
 import { ContractService, type PayrollRecipient } from "../contracts";
 import { DefiLlamaService } from "../defillama";
 import { YellowNetworkService } from "../yellow";
 import { ChatSession, type IMessage, type IPendingPayroll } from "../models/ChatSession";
+import { Payroll } from "../models/Payroll";
 
 const router = Router();
 
@@ -278,6 +279,23 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_employer_payrolls",
+      description: "Get all stored payrolls for an employer wallet, including recipients and status",
+      parameters: {
+        type: "object",
+        properties: {
+          employerWallet: {
+            type: "string",
+            description: "Employer wallet address",
+          },
+        },
+        required: ["employerWallet"],
+      },
+    },
+  },
 ];
 
 // Helper to convert MongoDB pending payroll to contract format
@@ -373,10 +391,17 @@ async function executeTool(
         const aiRecipients = args.recipients as Array<{ address: string; amount: string }> | undefined;
         const csvData = args.csvData as string | undefined;
 
+        const validateAddr = (addr: string): Address => {
+          if (!isAddress(addr)) {
+            throw new Error(`Invalid address: "${addr}". Must be a 0x-prefixed 40-hex-character Ethereum address.`);
+          }
+          return getAddress(addr);
+        };
+
         if (aiRecipients && aiRecipients.length > 0) {
           // AI-parsed recipients from plain text message
           recipients = aiRecipients.map((r) => ({
-            wallet: r.address as Address,
+            wallet: validateAddr(r.address),
             amount: parseUnits(r.amount, 6),
           }));
         } else if (csvData) {
@@ -388,7 +413,7 @@ async function executeTool(
           });
           recipients = records.map(
             (record: { address: string; amount: string }) => ({
-              wallet: record.address as Address,
+              wallet: validateAddr(record.address),
               amount: parseUnits(record.amount, 6),
             })
           );
@@ -564,6 +589,20 @@ async function executeTool(
         BigInt(updated.payrollDate),
         contractRecipients
       );
+
+      // Persist payroll with recipients and employer wallet
+      try {
+        await Payroll.create({
+          employerWallet: userAddress,
+          recipients: updated.recipients,
+          totalAmount: updated.totalAmount,
+          payrollDate: updated.payrollDate,
+          status: "pending",
+        });
+      } catch (err) {
+        console.warn("Failed to persist payroll:", (err as Error).message);
+      }
+
       return {
         result: JSON.stringify({
           to: txData.to,
@@ -713,6 +752,36 @@ async function executeTool(
       }
     }
 
+    case "get_employer_payrolls": {
+      const employerWallet = args.employerWallet as string;
+      try {
+        const payrolls = await Payroll.find({ employerWallet: { $regex: new RegExp(`^${employerWallet}$`, "i") } })
+          .sort({ createdAt: -1 })
+          .limit(20)
+          .lean();
+        return {
+          result: JSON.stringify({
+            count: payrolls.length,
+            payrolls: payrolls.map(p => ({
+              payrollId: p.payrollId,
+              totalAmountUsdc: (Number(BigInt(p.totalAmount)) / 1e6).toFixed(2),
+              payrollDate: new Date(p.payrollDate * 1000).toISOString(),
+              status: p.status,
+              recipientCount: p.recipients.length,
+              recipients: p.recipients.map(r => ({
+                wallet: r.wallet,
+                amountUsdc: (Number(BigInt(r.amount)) / 1e6).toFixed(2),
+              })),
+              txHash: p.txHash,
+            })),
+          }),
+          updatedPayroll: updated,
+        };
+      } catch (error) {
+        return { result: JSON.stringify({ error: (error as Error).message }), updatedPayroll: updated };
+      }
+    }
+
     default:
       return { result: JSON.stringify({ error: "Unknown tool: " + name }), updatedPayroll: updated };
   }
@@ -732,6 +801,7 @@ Your capabilities:
 7. Generate withdrawal transactions from Yellow Network
 8. Check which payrolls are ready to execute (payroll date has passed)
 9. Generate transactions to execute ready payrolls and bridge USDC
+10. Look up stored payrolls for an employer, including recipients and status
 
 Workflow for new payroll:
 1. Greet the user and ask how you can help
@@ -951,6 +1021,7 @@ router.post("/chat", upload.single("file"), async (req: Request, res: Response) 
             totalAmount: pendingPayroll.totalAmount
               ? (Number(BigInt(pendingPayroll.totalAmount)) / 1e6).toFixed(2)
               : null,
+            employerWallet: pendingPayroll.userAddress || null,
           }
         : null,
     });
