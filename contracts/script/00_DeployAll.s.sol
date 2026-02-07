@@ -142,6 +142,7 @@ contract DeployAllScript is Script {
         string memory json = string.concat(
             '{\n',
             '  "', chainKey, '": {\n',
+            '    "poolManager": "', vm.toString(config.poolManager), '",\n',
             '    "router": "', vm.toString(router), '",\n',
             '    "stateManager": "', vm.toString(stateManager), '",\n',
             '    "migration": "', vm.toString(migration), '",\n',

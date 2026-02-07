@@ -182,14 +182,17 @@ contract ArcFlowRouter is ArcFlowBase {
     function getPos(uint256 pid) external view returns (LPPosition memory) {
         return positions[pid];
     }
+
     function getProviderPayrolls(
         address p
     ) external view returns (uint256[] memory) {
         return providerPayrolls[p];
     }
+
     function getActiveIds() external view returns (uint256[] memory) {
         return activePayrollIds;
     }
+    
     function rescue(address t, uint256 a) external onlyOwner {
         IERC20(t).safeTransfer(owner, a);
     }

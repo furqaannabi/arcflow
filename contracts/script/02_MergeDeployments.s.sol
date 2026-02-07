@@ -2,9 +2,10 @@
 pragma solidity ^0.8.26;
 
 import {Script, console} from "forge-std/Script.sol";
+import {ChainConfig} from "./ChainConfig.sol";
 
 /// @notice Merges all deployment files into a single addresses.json for the agent
-/// @dev Run after deploying to all chains
+/// @dev Run after deploying to all chains. Injects poolManager from ChainConfig.
 contract MergeDeploymentsScript is Script {
     function run() public {
         console.log("=== Merging Deployments ===");
@@ -12,31 +13,38 @@ contract MergeDeploymentsScript is Script {
         // Read individual deployment files
         string memory baseSepolia = _tryReadFile("deployments/baseSepolia.json");
         string memory sepolia = _tryReadFile("deployments/sepolia.json");
-        string memory arbitrumSepolia = _tryReadFile("deployments/arbitrumSepolia.json");
         string memory arcTestnet = _tryReadFile("deployments/arcTestnet.json");
+
+        ChainConfig.Config memory bsConfig = ChainConfig.getBaseSepolia();
+        ChainConfig.Config memory sepConfig = ChainConfig.getSepolia();
 
         // Build merged JSON
         string memory merged = "{\n";
         bool hasContent = false;
 
         if (bytes(baseSepolia).length > 0) {
-            merged = string.concat(merged, '  "baseSepolia": ', _extractContent(baseSepolia));
+            merged = string.concat(
+                merged,
+                '  "baseSepolia": {\n',
+                '    "poolManager": "', vm.toString(bsConfig.poolManager), '",\n',
+                '    ', _extractFields(baseSepolia), '\n',
+                '  }'
+            );
             hasContent = true;
-            console.log("Added: baseSepolia");
+            console.log("Added: baseSepolia (poolManager:", bsConfig.poolManager, ")");
         }
 
         if (bytes(sepolia).length > 0) {
             if (hasContent) merged = string.concat(merged, ",\n");
-            merged = string.concat(merged, '  "sepolia": ', _extractContent(sepolia));
+            merged = string.concat(
+                merged,
+                '  "sepolia": {\n',
+                '    "poolManager": "', vm.toString(sepConfig.poolManager), '",\n',
+                '    ', _extractFields(sepolia), '\n',
+                '  }'
+            );
             hasContent = true;
-            console.log("Added: sepolia");
-        }
-
-        if (bytes(arbitrumSepolia).length > 0) {
-            if (hasContent) merged = string.concat(merged, ",\n");
-            merged = string.concat(merged, '  "arbitrumSepolia": ', _extractContent(arbitrumSepolia));
-            hasContent = true;
-            console.log("Added: arbitrumSepolia");
+            console.log("Added: sepolia (poolManager:", sepConfig.poolManager, ")");
         }
 
         if (bytes(arcTestnet).length > 0) {
@@ -62,9 +70,33 @@ contract MergeDeploymentsScript is Script {
         }
     }
 
+    /// @dev Extract the key-value fields from the inner object (without braces)
+    function _extractFields(string memory json) internal pure returns (string memory) {
+        bytes memory inner = bytes(_extractContent(json));
+        // Strip leading { and trailing }
+        if (inner.length < 2) return "";
+
+        uint start = 1; // skip {
+        uint end = inner.length - 1; // skip }
+
+        // Skip leading whitespace/newlines
+        while (start < end && (inner[start] == " " || inner[start] == "\n" || inner[start] == "\r" || inner[start] == "\t")) {
+            start++;
+        }
+        // Skip trailing whitespace/newlines
+        while (end > start && (inner[end - 1] == " " || inner[end - 1] == "\n" || inner[end - 1] == "\r" || inner[end - 1] == "\t")) {
+            end--;
+        }
+
+        bytes memory result = new bytes(end - start);
+        for (uint i = start; i < end; i++) {
+            result[i - start] = inner[i];
+        }
+        return string(result);
+    }
+
+    /// @dev Extract the inner object { ... } from a deployment JSON like { "key": { ... } }
     function _extractContent(string memory json) internal pure returns (string memory) {
-        // Simple extraction - assumes format { "key": { ... } }
-        // Returns the inner object content
         bytes memory b = bytes(json);
         uint start = 0;
         uint end = b.length;
@@ -98,7 +130,6 @@ contract MergeDeploymentsScript is Script {
             }
         }
 
-        // Extract substring
         bytes memory result = new bytes(end - start);
         for (uint i = start; i < end; i++) {
             result[i - start] = b[i];
