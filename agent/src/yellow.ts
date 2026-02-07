@@ -401,6 +401,7 @@ export class YellowChunkingService {
       await this.sdkClient.authenticate();
       this.sdkInitialized = true;
       console.log("[YELLOW] SDK initialized and authenticated");
+      console.log("[YELLOW SDK] Initialized with address:", this.sdkClient.getNitroliteClient().getAccountBalance(this.sdkClient.getAddress()));
     } catch (error) {
       console.error("[YELLOW] Failed to initialize SDK:", error);
       this.sdkClient = null;

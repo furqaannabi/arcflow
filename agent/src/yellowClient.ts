@@ -14,11 +14,13 @@ import {
   createWalletClient,
   http,
   type Address,
+  type PublicClient,
 } from "viem";
-import { baseSepolia } from "viem/chains";
+import { sepolia } from "viem/chains";
 import { privateKeyToAccount, generatePrivateKey, type PrivateKeyAccount } from "viem/accounts";
 import WebSocket from "ws";
 import { CHAIN_IDS, getRpcUrl } from "./config";
+import addressesJson from "./addresses.json";
 
 // ============ Configuration ============
 
@@ -30,18 +32,6 @@ export interface YellowConfig {
   chainId: number;
   challengeDuration: bigint;
 }
-
-const DEFAULT_CONFIG: YellowConfig = {
-  wsUrl: process.env.YELLOW_WS_URL || "wss://clearnet-sandbox.yellow.com/ws",
-  custody: (process.env.YELLOW_CUSTODY_ADDRESS ||
-    "0x019B65A265EB3363822f2752141b3dF16131b262") as Address,
-  adjudicator: (process.env.YELLOW_ADJUDICATOR_ADDRESS ||
-    "0x7c7ccbc98469190849BCC6c926307794fDfB11F2") as Address,
-  token: (process.env.YELLOW_TOKEN_ADDRESS ||
-    "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238") as Address,
-  chainId: 11155111, // Sepolia
-  challengeDuration: 3600n,
-};
 
 // ============ Types ============
 
@@ -60,9 +50,8 @@ interface PendingOperation {
 // ============ Yellow SDK Client ============
 
 export class YellowSDKClient {
-  private config: YellowConfig;
   private client!: NitroliteClient;
-  private publicClient: any;
+  private publicClient: PublicClient;
   private walletClient: ReturnType<typeof createWalletClient>;
   private ws: WebSocket | null = null;
   private sessionSigner: ReturnType<typeof createECDSAMessageSigner>;
@@ -77,17 +66,16 @@ export class YellowSDKClient {
   private authReject: ((error: Error) => void) | null = null;
   private authParams: any;
 
-  constructor(privateKey: string, config?: Partial<YellowConfig>) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+  constructor(privateKey: string) {
     this.account = privateKeyToAccount(privateKey as `0x${string}`);
-    const rpcUrl = getRpcUrl(CHAIN_IDS.BASE_SEPOLIA, process.env.ALCHEMY_API_KEY);
+    const rpcUrl = getRpcUrl(CHAIN_IDS.SEPOLIA, process.env.ALCHEMY_API_KEY);
     this.publicClient = createPublicClient({
-      chain: baseSepolia,
+      chain: sepolia,
       transport: http(rpcUrl),
-    }) as any;
+    });
 
     this.walletClient = createWalletClient({
-      chain: baseSepolia,
+      chain: sepolia,
       transport: http(rpcUrl),
       account: this.account,
     });
@@ -107,11 +95,11 @@ export class YellowSDKClient {
         walletClient: this.walletClient as any,
         stateSigner: new WalletStateSigner(this.walletClient as any),
         addresses: {
-          custody: this.config.custody,
-          adjudicator: this.config.adjudicator,
+          custody: '0x019B65A265EB3363822f2752141b3dF16131b262',
+          adjudicator: '0x7c7ccbc98469190849BCC6c926307794fDfB11F2',
         },
-        chainId: this.config.chainId,
-        challengeDuration: this.config.challengeDuration,
+        chainId: CHAIN_IDS.BASE_SEPOLIA,
+        challengeDuration: 3600n,
       });
     } catch (error) {
       // NitroliteClient initialization failed silently
@@ -133,7 +121,7 @@ export class YellowSDKClient {
     }
 
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(this.config.wsUrl);
+      this.ws = new WebSocket("wss://clearnet-sandbox.yellow.com/ws");
 
       const timeout = setTimeout(() => {
         reject(new Error("Connection timeout"));
@@ -254,8 +242,8 @@ export class YellowSDKClient {
         const createChannelMsg = await createCreateChannelMessage(
           this.sessionSigner,
           {
-            chain_id: this.config.chainId,
-            token: this.config.token,
+            chain_id: CHAIN_IDS.BASE_SEPOLIA,
+            token: addressesJson.baseSepolia.usdc as Address,
           }
         );
 
@@ -343,7 +331,7 @@ export class YellowSDKClient {
   }
 
   async withdraw(amount: bigint): Promise<string> {
-    const tx = await this.client.withdrawal(this.config.token, amount);
+    const tx = await this.client.withdrawal(addressesJson.baseSepolia.usdc as Address, amount);
     return tx as string;
   }
 
@@ -549,10 +537,6 @@ export class YellowSDKClient {
   getAddress(): Address {
     return this.account.address;
   }
-
-  getConfig(): YellowConfig {
-    return this.config;
-  }
 }
 
 // ============ Singleton Instance ============
@@ -561,13 +545,12 @@ let sdkInstance: YellowSDKClient | null = null;
 
 export function getYellowSDKClient(
   privateKey?: string,
-  config?: Partial<YellowConfig>
 ): YellowSDKClient {
   if (!sdkInstance) {
     if (!privateKey) {
       throw new Error("Private key required for first initialization");
     }
-    sdkInstance = new YellowSDKClient(privateKey, config);
+    sdkInstance = new YellowSDKClient(privateKey);
   }
   return sdkInstance;
 }
