@@ -283,10 +283,12 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
 // Helper to convert MongoDB pending payroll to contract format
 function toContractRecipients(recipients?: Array<{ wallet: string; amount: string }>): PayrollRecipient[] {
   if (!recipients) return [];
-  return recipients.map(r => ({
-    wallet: r.wallet as Address,
-    amount: BigInt(r.amount),
-  }));
+  return recipients
+    .filter(r => r.wallet && r.wallet.startsWith('0x') && r.wallet.length === 42)
+    .map(r => ({
+      wallet: r.wallet as Address,
+      amount: BigInt(r.amount),
+    }));
 }
 
 // Tool implementations
@@ -375,10 +377,12 @@ async function executeTool(
 
         if (aiRecipients && aiRecipients.length > 0) {
           // AI-parsed recipients from plain text message
-          recipients = aiRecipients.map((r) => ({
-            wallet: r.address as Address,
-            amount: parseUnits(r.amount, 6),
-          }));
+          recipients = aiRecipients
+            .filter((r) => r.address && r.address.startsWith('0x') && r.address.length === 42)
+            .map((r) => ({
+              wallet: r.address as Address,
+              amount: parseUnits(r.amount, 6),
+            }));
         } else if (csvData) {
           // CSV file/string with headers
           const records = parse(csvData, {
@@ -386,12 +390,16 @@ async function executeTool(
             skip_empty_lines: true,
             trim: true,
           });
-          recipients = records.map(
-            (record: { address: string; amount: string }) => ({
-              wallet: record.address as Address,
-              amount: parseUnits(record.amount, 6),
-            })
-          );
+          recipients = records
+            .filter((record: { address?: string; amount?: string }) => 
+              record.address && record.address.startsWith('0x') && record.address.length === 42
+            )
+            .map(
+              (record: { address: string; amount: string }) => ({
+                wallet: record.address as Address,
+                amount: parseUnits(record.amount, 6),
+              })
+            );
         }
 
         if (recipients.length === 0) {
@@ -559,6 +567,15 @@ async function executeTool(
       }
 
       const contractRecipients = toContractRecipients(updated.recipients);
+      
+      // Ensure we have valid recipients
+      if (contractRecipients.length === 0) {
+        return {
+          result: JSON.stringify({ error: "No valid recipients found. Please provide wallet addresses that start with '0x' and are 42 characters long." }),
+          updatedPayroll: updated,
+        };
+      }
+      
       const txData = contractService.generateDepositCalldata(
         totalAmountBigInt,
         BigInt(updated.payrollDate),
