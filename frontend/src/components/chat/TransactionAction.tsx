@@ -99,7 +99,7 @@ export default function TransactionAction({ to, data, description, value = "0", 
         </div>
         <div className="flex gap-2 overflow-hidden">
           <span className="font-bold shrink-0">Data:</span>
-          <span className="text-gray-400">{data.slice(0, 10)}... (hidden)</span>
+          <span className="text-gray-400">{data.slice(0, 10)}... </span>
         </div>
       </div>
 
