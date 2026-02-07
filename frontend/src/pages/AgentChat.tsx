@@ -73,6 +73,7 @@ export default function AgentChat() {
   const [isLoading, setIsLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [payrollsPanelOpen, setPayrollsPanelOpen] = useState(false);
+  const [allowFileUpload, setAllowFileUpload] = useState(false);
   // Backend session ID for API calls
   const [sessionId, setSessionId] = useState<string | null>(null);
   // Frontend session ID for localStorage persistence
@@ -116,6 +117,25 @@ export default function AgentChat() {
   useEffect(() => {
     localStorage.setItem('arcflow_active_session', frontendSessionId);
   }, [frontendSessionId]);
+
+  // Fetch session state to restore upload button visibility
+  useEffect(() => {
+    if (!sessionId) return;
+    
+    const fetchSessionState = async () => {
+      try {
+        const response = await fetch(`${AGENT_API_URL}/api/session/${sessionId}`);
+        if (response.ok) {
+          const data = await response.json();
+          setAllowFileUpload(data.allowFileUpload);
+        }
+      } catch (error) {
+        console.error("Failed to fetch session state:", error);
+      }
+    };
+    
+    fetchSessionState();
+  }, [sessionId]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -233,9 +253,10 @@ export default function AgentChat() {
                 } else if (data.error) {
                   // Error event
                   throw new Error(data.error);
-                } else if (data.transactions) {
-                  // Done event with transactions
-                  transactions = data.transactions;
+                } else if (data.transactions !== undefined || data.allowFileUpload !== undefined) {
+                  // Done event - update transactions and upload state
+                  if (data.transactions) transactions = data.transactions;
+                  if (data.allowFileUpload !== undefined) setAllowFileUpload(data.allowFileUpload);
                 }
               } catch (e) {
                 if ((e as Error).message !== "Unexpected end of JSON input") {
@@ -433,10 +454,12 @@ export default function AgentChat() {
             )}
             
             <div className="flex items-center gap-2 md:gap-3">
-              <CSVUpload 
-                onFilesSelect={(files) => setSelectedFiles(prev => [...prev, ...files])} 
-                disabled={isLoading} 
-              />
+              {allowFileUpload && (
+                <CSVUpload 
+                  onFilesSelect={(files) => setSelectedFiles(prev => [...prev, ...files])} 
+                  disabled={isLoading} 
+                />
+              )}
               
               <div className="flex-1 relative">
                 <textarea
