@@ -2,7 +2,9 @@ import { Router, Request, Response } from "express";
 import OpenAI from "openai";
 import multer from "multer";
 import { parse } from "csv-parse/sync";
-import { isAddress, getAddress, parseUnits, type Address } from "viem";
+import { isAddress, getAddress, parseUnits, type Address, createPublicClient, http } from "viem";
+import { mainnet } from "viem/chains";
+import { normalize } from "viem/ens";
 import { v4 as uuidv4 } from "uuid";
 import { ContractService, type PayrollRecipient } from "../contracts";
 import { DefiLlamaService } from "../defillama";
@@ -34,6 +36,12 @@ const openai = new OpenAI({
 const contractService = new ContractService(process.env.RPC_URL);
 const defiLlamaService = new DefiLlamaService();
 const yellowService = new YellowNetworkService(process.env.RPC_URL);
+
+// Mainnet client for ENS resolution
+const mainnetClient = createPublicClient({
+  chain: mainnet,
+  transport: http("https://eth.llamarpc.com"),
+});
 
 // Tool definitions for OpenAI function calling
 const tools: OpenAI.Chat.ChatCompletionTool[] = [
@@ -313,6 +321,23 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "resolve_ens",
+      description: "Resolve an ENS name (e.g., vitalik.eth) to an Ethereum wallet address. Use this when a user provides an ENS name instead of a wallet address.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "ENS name to resolve (e.g., 'vitalik.eth')",
+          },
+        },
+        required: ["name"],
+      },
+    },
+  },
 ];
 
 // Helper to convert MongoDB pending payroll to contract format
@@ -432,19 +457,34 @@ async function executeTool(
         const aiRecipients = args.recipients as Array<{ address: string; amount: string }> | undefined;
         const csvData = args.csvData as string | undefined;
 
-        const validateAddr = (addr: string): Address => {
-          if (!isAddress(addr)) {
-            throw new Error(`Invalid address: "${addr}". Must be a 0x-prefixed 40-hex-character Ethereum address.`);
+        // Resolve address or ENS name to a valid address
+        const resolveAddr = async (addrOrEns: string): Promise<Address> => {
+          // Check if it's an ENS name (ends with .eth or similar)
+          if (addrOrEns.endsWith(".eth") || addrOrEns.includes(".")) {
+            const resolved = await mainnetClient.getEnsAddress({
+              name: normalize(addrOrEns),
+            });
+            if (!resolved) {
+              throw new Error(`Could not resolve ENS name: ${addrOrEns}`);
+            }
+            console.log(`[ENS] Resolved ${addrOrEns} → ${resolved}`);
+            return resolved;
           }
-          return getAddress(addr);
+          // Otherwise validate as a regular address
+          if (!isAddress(addrOrEns)) {
+            throw new Error(`Invalid address: "${addrOrEns}". Must be a 0x-prefixed 40-hex-character Ethereum address or ENS name.`);
+          }
+          return getAddress(addrOrEns);
         };
 
         if (aiRecipients && aiRecipients.length > 0) {
           // AI-parsed recipients from plain text message
-          recipients = aiRecipients.map((r) => ({
-            wallet: validateAddr(r.address),
-            amount: parseUnits(r.amount, 6),
-          }));
+          recipients = await Promise.all(
+            aiRecipients.map(async (r) => ({
+              wallet: await resolveAddr(r.address),
+              amount: parseUnits(r.amount, 6),
+            }))
+          );
         } else if (csvData) {
           // CSV file/string with headers
           const records = parse(csvData, {
@@ -452,12 +492,12 @@ async function executeTool(
             skip_empty_lines: true,
             trim: true,
           });
-          recipients = records.map(
-            (record: Record<string, string>) => ({
+          recipients = await Promise.all(
+            records.map(async (record: Record<string, string>) => ({
               // Support both 'address' and 'addresses' column headers
-              wallet: validateAddr(record.address || record.addresses),
+              wallet: await resolveAddr(record.address || record.addresses),
               amount: parseUnits(record.amount, 6),
-            })
+            }))
           );
         }
 
@@ -895,6 +935,36 @@ async function executeTool(
       }
     }
 
+    case "resolve_ens": {
+      const ensName = args.name as string;
+      try {
+        const address = await mainnetClient.getEnsAddress({
+          name: normalize(ensName),
+        });
+
+        if (!address) {
+          return {
+            result: JSON.stringify({ error: `Could not resolve ENS name: ${ensName}` }),
+            updatedPayroll: updated,
+          };
+        }
+
+        return {
+          result: JSON.stringify({
+            ensName,
+            address,
+            success: true,
+          }),
+          updatedPayroll: updated,
+        };
+      } catch (error) {
+        return {
+          result: JSON.stringify({ error: `Failed to resolve ENS: ${(error as Error).message}` }),
+          updatedPayroll: updated,
+        };
+      }
+    }
+
     default:
       return { result: JSON.stringify({ error: "Unknown tool: " + name }), updatedPayroll: updated };
   }
@@ -923,15 +993,16 @@ Deposited funds are placed into a Uniswap V4 USDC-USDT liquidity pool to earn yi
 
 Your capabilities:
 1. Help users set up payroll distributions with a specific date and time
-2. Parse CSV files with employee wallet addresses and payment amounts
-3. Show expected yields from Uniswap V4 LP positions (using live data)
-4. Generate blockchain transactions for USDC approval and deposit into Uniswap V4
-5. Track existing LP positions and accumulated yields
-6. Check withdrawable balances from Yellow Network Custody Contract
-7. Generate withdrawal transactions from Yellow Network
-8. Check which payrolls are ready to execute (payroll date has passed)
-9. Generate transactions to execute ready payrolls and bridge USDC
-10. Look up stored payrolls for an employer, including recipients and status
+2. Parse CSV files with employee wallet addresses and payment amounts (also supports ENS names like vitalik.eth)
+3. Resolve ENS names to wallet addresses using resolve_ens
+4. Show expected yields from Uniswap V4 LP positions (using live data)
+5. Generate blockchain transactions for USDC approval and deposit into Uniswap V4
+6. Track existing LP positions and accumulated yields
+7. Check withdrawable balances from Yellow Network Custody Contract
+8. Generate withdrawal transactions from Yellow Network
+9. Check which payrolls are ready to execute (payroll date has passed)
+10. Generate transactions to execute ready payrolls and bridge USDC
+11. Look up stored payrolls for an employer, including recipients and status
 
 Workflow for new payroll:
 1. Greet the user and ask how you can help
