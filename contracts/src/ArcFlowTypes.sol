@@ -23,7 +23,6 @@ struct LPPosition {
 
 struct CallbackData {
     uint8 action; // 0=addLiquidity, 1=removeLiquidity, 2=swap
-    address sender;
     bytes data;
 }
 

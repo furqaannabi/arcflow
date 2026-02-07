@@ -13,7 +13,13 @@
       "Bash(npx tsc:*)",
       "Bash(grep:*)",
       "Bash(~/.foundry/bin/forge test:*)",
-      "Bash(where:*)"
+      "Bash(where:*)",
+      "Bash(cast call:*)",
+      "Bash(curl:*)",
+      "Bash(node -e:*)",
+      "WebSearch",
+      "WebFetch(domain:sepolia.etherscan.io)",
+      "WebFetch(domain:docs.uniswap.org)"
     ]
   }
 }

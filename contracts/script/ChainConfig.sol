@@ -31,9 +31,9 @@ library ChainConfig {
         return Config({
             chainId: SEPOLIA,
             name: "Sepolia",
-            poolManager: 0x8C4BcBE6b9eF47855f97E675296FA3F6fafa5F1A,
+            poolManager: 0xE03A1074c86CFeDd5C142C4F04F1a1536e203543,
             usdc: 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238,
-            usdt: 0x7169D38820dfd117C3FA1f22a697dBA58d90BA06,
+            usdt: 0xaA8E23Fb1079EA71e0a56F48a2aA51851D8433D0,
             gatewayWallet: 0x0077777d7EBA4688BDeF3E311b846F25870A19B9,
             gatewayMinter: 0x0022222ABE238Cc2C7Bb1f21003F0a260052475B,
             circleDomain: CIRCLE_DOMAIN_ETHEREUM
@@ -47,7 +47,7 @@ library ChainConfig {
             name: "Base Sepolia",
             poolManager: 0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408,
             usdc: 0x036CbD53842c5426634e7929541eC2318f3dCF7e,
-            usdt: 0x323e78f944A9a1FcF3a10efcC5319DBb0bB6e673,
+            usdt: 0x97078835e54862f808e9D77c3BD50019700ac952,
             gatewayWallet: 0x0077777d7EBA4688BDeF3E311b846F25870A19B9,
             gatewayMinter: 0x0022222ABE238Cc2C7Bb1f21003F0a260052475B,
             circleDomain: CIRCLE_DOMAIN_BASE

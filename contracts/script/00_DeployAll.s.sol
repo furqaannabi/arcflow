@@ -48,11 +48,11 @@ contract DeployAllScript is Script {
         PoolKey memory poolKey = PoolKey({
             currency0: Currency.wrap(token0),
             currency1: Currency.wrap(token1),
-            fee: 100, // 0.01% for stablecoins
-            tickSpacing: 1,
+            fee: 500, // 0.05% — matches the pool with existing liquidity
+            tickSpacing: 10,
             hooks: IHooks(address(0))
         });
-
+        console.log("Pool ID:", vm.toString(abi.encode(poolKey.toId())));
         console.log("Pool Token0:", token0);
         console.log("Pool Token1:", token1);
         console.log("Pool Manager:", config.poolManager);
