@@ -1,38 +1,59 @@
 # ArcFlow Contracts
 
-Smart contracts for cross-chain payroll fund management with yield optimization and Yellow Network state channel verification.
+Smart contracts for cross-chain payroll fund management with yield optimization via Uniswap V4 and Circle CCTP bridging.
 
 ## Contracts
 
 | Contract | Description |
 |----------|-------------|
-| `ArcFlowRouter` | Core deposit + Yellow channel settlement for USDC-USDT LP |
-| `ArcFlowBase` | Base contract with Uniswap V4 pool operations |
-| `ArcFlowStateManager` | APY tracking, migration state, and Nitrolite channel verification |
-| `ArcFlowMigration` | Cross-chain migration via Yellow Network channels |
-| `ArcPayrollDistributor` | Final payroll distribution with channel verification |
+| `ArcFlowRouter` | Core deposit, execute, cancel for USDC-USDT LP positions |
+| `ArcFlowBase` | Base contract with Uniswap V4 pool operations (add/remove liquidity, swap) |
+| `ArcFlowStateManager` | APY tracking across chains, migration validation |
+| `ArcFlowMigration` | Cross-chain migration via Circle CCTP bridge |
+| `ArcFlowTypes` | Shared structs: `LPPosition`, `PayrollRecipient`, `CallbackData` |
+| `ArcPayrollDistributor` | Final payroll distribution on Arc Chain |
 
-## Yellow Network Integration
+## Key Functions
 
-All payroll executions and migrations **require** Yellow Network state channel verification. Direct execution methods are disabled.
+### ArcFlowRouter
 
-### Key Functions
+| Function | Access | Description |
+|----------|--------|-------------|
+| `deposit(amt, date, recipients)` | Anyone | Deposit USDC, create LP position with payroll metadata |
+| `execute(pid)` | Agent only | Execute ready payroll: remove LP, bridge via Circle Gateway |
+| `cancel(pid)` | Provider only | Cancel payroll before date: remove LP, return USDC to provider |
+| `getPos(pid)` | View | Get full position data |
+| `getPosData(pid)` | View | Get liquidity, currentChainId, payrollDate |
+| `getActiveIds()` | View | List all active payroll IDs |
+| `getProviderPayrolls(addr)` | View | List payroll IDs for a provider |
+| `seed(a0, a1)` | Owner only | Initial pool liquidity seeding |
+| `removeLiqFor(pid)` | Migration only | Remove liquidity for cross-chain migration |
+| `addLiqFor(pid, amt)` | Migration only | Add liquidity after receiving migration |
+| `updatePosChain(pid, cid)` | Migration only | Update position's current chain |
 
-| Contract | Function | Description |
-|----------|----------|-------------|
-| `ArcFlowRouter` | `settle()` | Execute payroll via verified channel state |
-| `ArcFlowMigration` | `migrateOutViaChannel()` | Migrate with channel signature |
-| `ArcFlowMigration` | `migrateInViaChannel()` | Receive migration with channel verification |
-| `ArcPayrollDistributor` | `distributeFromChannel()` | Distribute with channel verification |
-| `ArcFlowStateManager` | `verifyChannelState()` | Verify Yellow Network channel signatures |
-| `ArcFlowStateManager` | `recordChannelSettlement()` | Record channel settlement on-chain |
+### ArcFlowMigration
+
+| Function | Access | Description |
+|----------|--------|-------------|
+| `migrateOut(pid, targetChainId)` | Agent only | Remove liquidity, bridge USDC to target chain |
+| `migrateIn(pid, fromChainId, amt, attestation, sig)` | Agent only | Receive bridged USDC, re-add liquidity |
+| `shouldMigrate(pid)` | View | Check if position should migrate for better APY |
+
+### ArcFlowStateManager
+
+| Function | Access | Description |
+|----------|--------|-------------|
+| `batchUpdateChainApy(chainIds, apys)` | Agent only | Update APY data for multiple chains |
+| `getBestChainForApy()` | View | Get chain with highest APY |
+| `getChainApy(chainId)` | View | Get APY, lastUpdated, isStale for a chain |
+| `isMigrationValid(payrollDate)` | View | Check if migration timing is valid |
 
 ## Supported Chains
 
 | Chain | Chain ID | Type |
 |-------|----------|------|
-| Base Sepolia | 84532 | Source |
-| Sepolia | 11155111 | Source |
+| Base Sepolia | 84532 | Source (deposits, LP) |
+| Sepolia | 11155111 | Source (deposits, LP) |
 | Arc Testnet | 5042002 | Distribution |
 
 ## Quick Start
@@ -57,7 +78,19 @@ ETHERSCAN_API_KEY=...
 BASESCAN_API_KEY=...
 ```
 
-### 3. Deploy
+### 3. Build
+
+```bash
+forge build
+```
+
+### 4. Test
+
+```bash
+forge test
+```
+
+### 5. Deploy
 
 ```bash
 # Deploy to Base Sepolia (with verification)
@@ -76,7 +109,7 @@ BASESCAN_API_KEY=...
 ./deploy.sh baseSepolia --no-verify
 ```
 
-### 4. Merge Deployments
+### 6. Merge Deployments
 
 ```bash
 ./deploy.sh merge
@@ -106,23 +139,25 @@ forge script script/01_DeployDistributor.s.sol:DeployDistributorScript --rpc-url
 
 | Contract | Address |
 |----------|---------|
-| Router | `0x5a17ADC65211839f9ba2aE818902758F7C7F8Aa7` |
-| StateManager | `0xf9973fb417EC0c6479ce48428c609d8ec9e5faA3` |
-| Migration | `0x89f905bE3C7852971965353A8D0E565207A7AA3f` |
+| PoolManager | `0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408` |
+| Router | `0x941800436155Aad7c028f91A6E228935424C1D2d` |
+| StateManager | `0xe09a64D36A357b775EFA500266199E4eBb40d124` |
+| Migration | `0xcFc45554F7097D42f0991031C15F9EB8f956673B` |
 
 ### Sepolia (11155111)
 
 | Contract | Address |
 |----------|---------|
-| Router | `0x3d3131bA11363596423A6c77B21EB1F174752547` |
-| StateManager | `0xc563847a746b8bd1B19d62e2b7377b4e9AA4D574` |
-| Migration | `0x6bee4505Ff82f6647932F93a157eA0E67b565D00` |
+| PoolManager | `0xE03A1074c86CFeDd5C142C4F04F1a1536e203543` |
+| Router | `0x45A1dCff7146E9e77E9c5D48b74dfb9950cA5B08` |
+| StateManager | `0xf59B9e400C63E7e8d5B6D6fc0Caff09256Fd23ba` |
+| Migration | `0xeAA7B3747e0d35B1e4850c6046fD18F699F51FB6` |
 
 ### Arc Testnet (5042002)
 
 | Contract | Address |
 |----------|---------|
-| Distributor | `0x559B75C59DB2ec1753f02F4a6BD50303DA76cfe8` |
+| Distributor | `0xD5851fB58A875cEBabf6828F93416A062D737907` |
 
 ## Deployment Output
 
@@ -134,123 +169,48 @@ Deployments are saved to:
 ## Architecture
 
 ```
-                          Yellow Network
-                    ┌─────────────────────┐
-                    │  Nitrolite SDK      │
-                    │  - State Channels   │
-                    │  - Signatures       │
-                    └──────────┬──────────┘
-                               │
-       ┌───────────────────────┼───────────────────────┐
-       │                       │                       │
-       ▼                       ▼                       ▼
-Source Chains (Base/Sepolia)              Arc Testnet
-┌─────────────────────────────┐          ┌──────────────────────────┐
-│  ArcFlowRouter              │          │  ArcPayrollDistributor   │
-│  - deposit()                │          │  - distributeFromChannel()│
-│  - settle()                 │  ─────►  │  - verifyChannelState()  │
-│                             │          │                          │
-│  ArcFlowMigration           │          │                          │
-│  - migrateOutViaChannel()   │          │                          │
-│  - migrateInViaChannel()    │          │                          │
-│                             │          │                          │
-│  ArcFlowStateManager        │          │                          │
-│  - verifyChannelState()     │          │                          │
-│  - recordChannelSettlement()│          │                          │
-│  - track APY                │          │                          │
-└─────────────────────────────┘          └──────────────────────────┘
-         │                                          │
-         │          Circle CCTP Bridge              │
-         └──────────────────────────────────────────┘
+Source Chains (Base Sepolia / Sepolia)              Arc Testnet
++--------------------------------------------+     +----------------------------+
+|  ArcFlowRouter                             |     |  ArcPayrollDistributor     |
+|  - deposit(amt, date, recipients)          |     |  - mintVerifyAndDistribute()|
+|  - execute(pid)  [agent-only]              |     |                            |
+|  - cancel(pid)   [provider-only]           |     +----------------------------+
+|  - seed(a0, a1)  [owner-only]             |                  ^
+|                                            |                  |
+|  ArcFlowBase                               |     Circle CCTP Bridge
+|  - _addLiquidity() / _removeLiquidity()    |     (burn on source, mint on Arc)
+|  - _swap()                                 |                  |
+|                                            |------------------+
+|  ArcFlowMigration                          |
+|  - migrateOut(pid, targetChainId)          |
+|  - migrateIn(pid, fromChainId, amt, ...)   |
+|                                            |
+|  ArcFlowStateManager                       |
+|  - batchUpdateChainApy()                   |
+|  - getBestChainForApy()                    |
+|  - isMigrationValid()                      |
++--------------------------------------------+
 ```
 
 ## Execution Flow
 
-1. **Deposit**: User deposits USDC via `deposit()` - creates LP position
-2. **Channel Creation**: Agent creates Yellow Network state channel
-3. **Settlement**: Agent calls `settle()` with channel signature
-4. **Verification**: StateManager verifies channel state via `verifyChannelState()`
-5. **Withdrawal**: Liquidity removed, yield calculated
-6. **Bridge**: USDC bridged to Arc via Circle Gateway
-7. **Distribution**: `distributeFromChannel()` sends to recipients
+1. **Deposit**: User deposits USDC via `deposit()` — creates LP position
+2. **Yield**: Position earns swap fees in Uniswap V4 USDC/USDT pool
+3. **APY Rebalance** (optional): Agent migrates to higher-yield chain if >0.5% diff
+4. **Execute**: On payroll date, agent calls `execute()` — removes LP, bridges via Circle Gateway
+5. **Distribution**: `mintVerifyAndDistribute()` on Arc Chain sends USDC to recipients
+
+## Cancel Flow
+
+1. **Same chain**: Provider calls `cancel(pid)` — removes LP, returns USDC directly
+2. **Migrated**: Agent first migrates position back to source chain, then provider cancels
+3. Reverts if: wrong provider, past payroll date, position on different chain, zero liquidity
 
 ## Circle Gateway Addresses
 
 | Network | GatewayWallet | GatewayMinter |
 |---------|---------------|---------------|
 | Testnet | `0x0077777d7EBA4688BDeF3E311b846F25870A19B9` | `0x0022222ABE238Cc2C7Bb1f21003F0a260052475B` |
-| Mainnet | `0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE` | `0x2222222d7164433c4C09B0b0D809a9b52C04C205` |
-
-## Yellow Network (Nitrolite) Addresses
-
-| Network | Contract | Address |
-|---------|----------|---------|
-| Sepolia | Custody | `0x019B65A265EB3363822f2752141b3dF16131b262` |
-| Sepolia | Adjudicator | `0x7c7ccbc98469190849BCC6c926307794fDfB11F2` |
-| Sepolia | USDC Token | `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` |
-
-### Nitrolite Interfaces
-
-The contracts include interfaces for Yellow Network's Nitrolite protocol:
-
-```solidity
-// src/interfaces/INitrolite.sol
-interface IChannel {
-    function createChannel(ChannelParams calldata params) external returns (bytes32);
-    function closeChannel(bytes32 channelId, ChannelState calldata state) external;
-    function challenge(bytes32 channelId, ChannelState calldata state) external;
-}
-
-interface IDeposit {
-    function deposit(address token, uint256 amount) external;
-    function withdraw(address token, uint256 amount, address recipient) external;
-    function getBalance(address account, address token) external view returns (uint256);
-}
-
-interface IAdjudicator {
-    function validateTransition(ChannelState calldata prev, ChannelState calldata next) external view returns (bool);
-}
-```
-
-## State Manager Channel Functions
-
-The `ArcFlowStateManager` contract tracks Yellow Network channel settlements:
-
-```solidity
-struct ChannelSettlement {
-    bytes32 channelId;
-    uint256 payrollId;
-    uint256 totalAmount;
-    uint256 settledAt;
-    bool distributed;
-}
-
-// Verify a channel state signature
-function verifyChannelState(
-    bytes32 channelId,
-    bytes32 stateHash,
-    bytes calldata signature
-) external view returns (bool);
-
-// Record a channel settlement (called by Router/Migration)
-function recordChannelSettlement(
-    bytes32 channelId,
-    uint256 payrollId,
-    uint256 totalAmount
-) external;
-
-// Get channel settlement details
-function getChannelSettlement(bytes32 channelId) external view returns (ChannelSettlement memory);
-
-// Get channel associated with a payroll
-function getPayrollChannel(uint256 payrollId) external view returns (bytes32);
-```
-
-## Testing
-
-```bash
-forge test
-```
 
 ## Contract Verification
 

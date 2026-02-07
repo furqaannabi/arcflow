@@ -1,73 +1,66 @@
-# React + TypeScript + Vite
+# ArcFlow Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React frontend for the ArcFlow cross-chain payroll management platform. Provides a chat-based interface for employers to deposit USDC, manage payroll positions, and interact with the ArcFlow agent.
 
-Currently, two official plugins are available:
+## Tech Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **React 19** with TypeScript
+- **Vite** for build tooling
+- **Tailwind CSS v4** for styling
+- **Circle Modular Wallets** for wallet authentication
+- **viem** for Ethereum interactions
+- **react-router-dom** for routing
+- **react-markdown** for rendering chat messages
+- **recharts** for data visualization
+- **lucide-react** for icons
 
-## React Compiler
+## Pages
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+| Route | Component | Description |
+|-------|-----------|-------------|
+| `/` | `Landing` | Landing page with product overview |
+| `/chat` | `AgentChat` | Main chat interface with the ArcFlow agent |
 
-## Expanding the ESLint configuration
+## Key Components
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+| Component | Description |
+|-----------|-------------|
+| `AgentChat` | Full chat page with SSE streaming, tool results, transaction signing |
+| `ChatMessage` | Renders individual messages with markdown support |
+| `TransactionAction` | Signable transaction button rendered from tool results |
+| `CSVUpload` | CSV file upload for employee payroll data |
+| `PayrollsPanel` | Side panel showing active payroll positions |
+| `Sidebar` | Navigation sidebar |
+| `ConnectButton` | Circle wallet connect/disconnect |
+| `ChainSwitcher` | Network chain selector |
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## Contexts
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+| Context | Description |
+|---------|-------------|
+| `AuthContext` | Circle Modular Wallets authentication and wallet state |
+| `ThemeContext` | Dark/light theme management |
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Quick Start
+
+```bash
+# Install dependencies
+npm install
+
+# Run development server
+npm run dev
+
+# Build for production
+npm run build
+
+# Preview production build
+npm run preview
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Environment
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+The frontend connects to the ArcFlow agent backend (default: `http://localhost:3001`).
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## License
+
+MIT

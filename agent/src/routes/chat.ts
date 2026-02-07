@@ -34,8 +34,6 @@ const openai = new OpenAI({
 
 const contractService = new ContractService(process.env.RPC_URL);
 const defiLlamaService = new DefiLlamaService();
-const yellowService = new YellowNetworkService(process.env.RPC_URL);
-
 // Mainnet client for ENS resolution
 const mainnetClient = createPublicClient({
   chain: mainnet,
