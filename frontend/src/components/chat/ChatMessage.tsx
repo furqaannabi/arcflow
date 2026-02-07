@@ -29,30 +29,45 @@ export default function ChatMessage({ role, content, timestamp, onTransactionSuc
   const { textPart, transaction } = useMemo(() => {
     if (isUser || isSystem) return { textPart: content, transaction: null };
 
-    // Look for JSON code blocks: ```json ... ```
-    // We try to find a block that looks like a transaction
-    const jsonBlockRegex = /```json\s*(\{[\s\S]*?\})\s*```/;
-    const match = content.match(jsonBlockRegex);
+    let workingContent = content;
+    let foundTransaction: TransactionData | null = null;
 
+    // Pattern 1: ```json { ... } ``` (with code fences)
+    const jsonBlockRegex = /```json\s*(\{[\s\S]*?\})\s*```/g;
+    // Pattern 2: Bare JSON object with tx fields (no fences)
+    const bareJsonRegex = /\{[\s\S]*?"to"\s*:\s*"0x[a-fA-F0-9]+"[\s\S]*?"data"\s*:\s*"0x[a-fA-F0-9]+"[\s\S]*?\}/g;
+
+    // Try code-fenced JSON first
+    let match = jsonBlockRegex.exec(content);
     if (match) {
       try {
         const jsonContent = JSON.parse(match[1]);
-        // Check if it has transaction fields
         if (jsonContent.to && jsonContent.data) {
-          const description = jsonContent.description || "Sign Transaction";
-          // Remove the code block from the display text to avoid duplication
-          const textPart = content.replace(match[0], "").trim();
-          return {
-            textPart,
-            transaction: { ...jsonContent, description } as TransactionData,
-          };
+          foundTransaction = { ...jsonContent, description: jsonContent.description || "Sign Transaction" };
+          workingContent = workingContent.replace(match[0], "").trim();
         }
-      } catch (e) {
-        // failed to parse or not a transaction, ignore
+      } catch (e) { /* ignore parse errors */ }
+    }
+
+    // Also try bare JSON blocks (in case AI outputs without fences)
+    if (!foundTransaction) {
+      match = bareJsonRegex.exec(content);
+      if (match) {
+        try {
+          const jsonContent = JSON.parse(match[0]);
+          if (jsonContent.to && jsonContent.data) {
+            foundTransaction = { ...jsonContent, description: jsonContent.description || "Sign Transaction" };
+            workingContent = workingContent.replace(match[0], "").trim();
+          }
+        } catch (e) { /* ignore parse errors */ }
       }
     }
 
-    return { textPart: content, transaction: null };
+    // Even if we found transaction via props, remove any remaining JSON blocks
+    workingContent = workingContent.replace(/```json\s*\{[\s\S]*?\}\s*```/g, "").trim();
+    workingContent = workingContent.replace(/\{[\s\S]*?"to"\s*:\s*"0x[a-fA-F0-9]+"[\s\S]*?"data"\s*:\s*"0x[a-fA-F0-9]+"[\s\S]*?\}/g, "").trim();
+
+    return { textPart: workingContent, transaction: foundTransaction };
   }, [content, isUser, isSystem]);
 
   if (isSystem) {

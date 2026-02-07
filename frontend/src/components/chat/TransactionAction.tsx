@@ -43,9 +43,25 @@ export default function TransactionAction({ to, data, description, value = "0", 
         onSuccess(hash);
       }
     } catch (error) {
-      console.error("Transaction failed:", error);
+      const fullError = (error as Error).message || "Transaction failed";
+      console.error("Transaction failed (full error):", fullError);
+      
+      // Parse error and show user-friendly message
+      let friendlyMessage = "Transaction failed. Please try again.";
+      if (fullError.toLowerCase().includes("reverted")) {
+        friendlyMessage = "Transaction was rejected by the contract. This may be due to insufficient allowance or balance.";
+      } else if (fullError.toLowerCase().includes("rejected") || fullError.toLowerCase().includes("denied")) {
+        friendlyMessage = "Transaction was rejected by user.";
+      } else if (fullError.toLowerCase().includes("insufficient")) {
+        friendlyMessage = "Insufficient funds for this transaction.";
+      } else if (fullError.toLowerCase().includes("gas")) {
+        friendlyMessage = "Transaction ran out of gas. Try again with higher gas limit.";
+      } else if (fullError.toLowerCase().includes("nonce")) {
+        friendlyMessage = "Transaction nonce issue. Please refresh and try again.";
+      }
+      
       setStatus("error");
-      setErrorMessage((error as Error).message || "Transaction failed");
+      setErrorMessage(friendlyMessage);
     }
   };
 
@@ -90,9 +106,9 @@ export default function TransactionAction({ to, data, description, value = "0", 
       {status === "error" && (
         <div className="mb-3 p-3 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-900/30 rounded-lg flex items-start gap-2 animate-in fade-in slide-in-from-top-1 overflow-hidden">
           <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
-          <div className="text-sm text-red-600 dark:text-red-400 min-w-0 overflow-hidden" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
-            <span className="font-semibold block mb-0.5">Transaction Error</span>
-            <span className="block break-all">{errorMessage}</span>
+          <div className="text-sm text-red-600 dark:text-red-400 min-w-0">
+            <span className="font-semibold block mb-0.5">Transaction Failed</span>
+            <span className="block">{errorMessage}</span>
           </div>
         </div>
       )}
