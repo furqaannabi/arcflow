@@ -301,10 +301,12 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
 // Helper to convert MongoDB pending payroll to contract format
 function toContractRecipients(recipients?: Array<{ wallet: string; amount: string }>): PayrollRecipient[] {
   if (!recipients) return [];
-  return recipients.map(r => ({
-    wallet: r.wallet as Address,
-    amount: BigInt(r.amount),
-  }));
+  return recipients
+    .filter(r => r.wallet && r.wallet.startsWith('0x') && r.wallet.length === 42)
+    .map(r => ({
+      wallet: r.wallet as Address,
+      amount: BigInt(r.amount),
+    }));
 }
 
 // Tool implementations
@@ -584,6 +586,15 @@ async function executeTool(
       }
 
       const contractRecipients = toContractRecipients(updated.recipients);
+      
+      // Ensure we have valid recipients
+      if (contractRecipients.length === 0) {
+        return {
+          result: JSON.stringify({ error: "No valid recipients found. Please provide wallet addresses that start with '0x' and are 42 characters long." }),
+          updatedPayroll: updated,
+        };
+      }
+      
       const txData = contractService.generateDepositCalldata(
         totalAmountBigInt,
         BigInt(updated.payrollDate),
