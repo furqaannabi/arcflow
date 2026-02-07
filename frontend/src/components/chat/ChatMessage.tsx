@@ -70,6 +70,11 @@ export default function ChatMessage({ role, content, timestamp, onTransactionSuc
     return { textPart: workingContent, transaction: foundTransaction };
   }, [content, isUser, isSystem]);
 
+  // Hide empty/placeholder messages (SSE streaming starts with empty content)
+  if (!isUser && !isSystem && !textPart.trim() && !transaction) {
+    return null;
+  }
+
   if (isSystem) {
      return (
         <div className="flex justify-center my-4">

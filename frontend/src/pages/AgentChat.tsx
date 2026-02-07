@@ -151,9 +151,9 @@ export default function AgentChat() {
     setMessages((prev) => [...prev, userMsg]);
 
     try {
-      // Helper to send a single request
-      const sendRequest = async (file?: File, msg?: string) => {
-        let body;
+      // SSE stream handler for a single request
+      const sendStreamingRequest = async (file?: File, msg?: string) => {
+        let body: FormData | string;
         const headers: Record<string, string> = {};
 
         if (file) {
@@ -163,7 +163,6 @@ export default function AgentChat() {
           if (userAddress) formData.append("userAddress", userAddress);
           formData.append("file", file);
           body = formData;
-          // Content-Type header is set automatically for FormData
         } else {
           body = JSON.stringify({
             message: msg,
@@ -179,44 +178,76 @@ export default function AgentChat() {
           body,
         });
 
-        const data = await response.json();
-        
-        if (data.error) {
-          throw new Error(data.error);
+        if (!response.ok || !response.body) {
+          throw new Error("Failed to connect to agent");
         }
 
-        // Store session ID if returned
-        if (data.sessionId && !sessionId) {
-            setSessionId(data.sessionId);
-        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let streamedContent = "";
+        let transactions: Array<{ to: string; data: string; description: string; [key: string]: any }> = [];
 
-        return data; // Return full data to handle 'allowFileUpload' if needed
-      };
+        // Add placeholder assistant message that we'll update
+        const assistantMsgIndex = (await new Promise<number>((resolve) => {
+          setMessages((prev) => {
+            const newMessages = [...prev, { role: "assistant" as const, content: "", timestamp: new Date() }];
+            resolve(newMessages.length - 1);
+            return newMessages;
+          });
+        }));
 
-      if (currentFiles.length > 0) {
-        // Send files sequentially
-        for (let i = 0; i < currentFiles.length; i++) {
-          const file = currentFiles[i];
-          // Attach text input only to the first file request
-          const msgToSend = i === 0 ? currentInput : undefined; 
-          
-          // Add system message for upload progress
-          if (currentFiles.length > 1) {
-             setMessages((prev) => [...prev, { role: "system", content: `Uploading ${file.name}...`, timestamp: new Date() }]);
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+          for (const line of lines) {
+            if (line.startsWith("event: ")) {
+              const eventType = line.slice(7).trim();
+              continue;
+            }
+            if (line.startsWith("data: ")) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                
+                // Handle different event types
+                if (data.content !== undefined) {
+                  // Token event - append content
+                  streamedContent += data.content;
+                  setMessages((prev) => {
+                    const updated = [...prev];
+                    if (updated[assistantMsgIndex]) {
+                      updated[assistantMsgIndex] = { ...updated[assistantMsgIndex], content: streamedContent };
+                    }
+                    return updated;
+                  });
+                } else if (data.sessionId && !sessionId) {
+                  // Session event
+                  setSessionId(data.sessionId);
+                } else if (data.error) {
+                  // Error event
+                  throw new Error(data.error);
+                } else if (data.transactions) {
+                  // Done event with transactions
+                  transactions = data.transactions;
+                }
+              } catch (e) {
+                if ((e as Error).message !== "Unexpected end of JSON input") {
+                  console.error("SSE parse error:", e);
+                }
+              }
+            }
           }
-
-          const data = await sendRequest(file, msgToSend);
-          setMessages((prev) => [...prev, { role: "assistant", content: data.response, timestamp: new Date() }]);
         }
-      } else {
-        // Text only
-        const data = await sendRequest(undefined, currentInput);
-        
-        // Check for transactions and append to content so ChatMessage renders it
-        let content = data.response;
-        if (data.transactions && data.transactions.length > 0) {
-          const tx = data.transactions[0];
-          content += `\n\n\`\`\`json\n${JSON.stringify({
+
+        // Append transaction JSON if present
+        if (transactions.length > 0) {
+          const tx = transactions[0];
+          const txJson = `\n\n\`\`\`json\n${JSON.stringify({
             to: tx.to,
             data: tx.data,
             description: tx.description,
@@ -224,9 +255,37 @@ export default function AgentChat() {
             payrollDate: tx.payrollDate,
             recipientCount: tx.recipientCount
           }, null, 2)}\n\`\`\``;
+          
+          setMessages((prev) => {
+            const updated = [...prev];
+            if (updated[assistantMsgIndex]) {
+              updated[assistantMsgIndex] = { 
+                ...updated[assistantMsgIndex], 
+                content: streamedContent + txJson 
+              };
+            }
+            return updated;
+          });
         }
 
-        setMessages((prev) => [...prev, { role: "assistant", content, timestamp: new Date() }]);
+        return { response: streamedContent, transactions };
+      };
+
+      if (currentFiles.length > 0) {
+        // Send files sequentially
+        for (let i = 0; i < currentFiles.length; i++) {
+          const file = currentFiles[i];
+          const msgToSend = i === 0 ? currentInput : undefined; 
+          
+          if (currentFiles.length > 1) {
+             setMessages((prev) => [...prev, { role: "system", content: `Uploading ${file.name}...`, timestamp: new Date() }]);
+          }
+
+          await sendStreamingRequest(file, msgToSend);
+        }
+      } else {
+        // Text only
+        await sendStreamingRequest(undefined, currentInput);
       }
 
     } catch (error) {

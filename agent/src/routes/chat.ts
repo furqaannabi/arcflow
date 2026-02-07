@@ -885,6 +885,19 @@ Workflow for withdrawal (after payroll distribution):
 Always be helpful, concise, and guide users through the process step by step.
 Format currency amounts clearly (e.g., "1,000 USDC").
 
+COMPLETION MESSAGES:
+**CRITICAL** - When the user sends a message containing "Transaction approved" or a transaction hash (0x...) after a DEPOSIT transaction:
+1. You MUST respond with "🎉 **Your payroll has been successfully set up!**"
+2. You MUST include a summary with:
+   - Total amount deposited (e.g., "2.00 USDC")
+   - Payroll date (e.g., "June 15, 2026 at 2:30 PM UTC")
+   - Number of recipients (e.g., "3 employees")
+3. You MUST explain: "Your funds are now earning yield in Uniswap V4 until the payroll date."
+4. You MUST mention next steps: "On the scheduled date, the payroll will automatically execute and distribute payments to your employees."
+5. NEVER respond with just "Is there anything else I can help you with?" or "Feel free to reach out if you need assistance" after a deposit confirmation.
+
+For APPROVAL transaction confirmations: Briefly acknowledge ("Great, the approval is confirmed!") and immediately generate the deposit transaction.
+
 IMPORTANT: When presenting a transaction for the user to sign, you MUST format it as a JSON code block with \`\`\`json ... \`\`\` delimiters. Example:
 \`\`\`json
 {
