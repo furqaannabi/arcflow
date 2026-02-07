@@ -1,4 +1,5 @@
-import { X, Calendar, Users, DollarSign } from "lucide-react";
+import { useState, useEffect } from "react";
+import { X, Calendar, Users, DollarSign, ExternalLink, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface Payroll {
@@ -18,10 +19,34 @@ interface PayrollsPanelProps {
   userAddress?: string;
 }
 
+const AGENT_API_URL = "http://localhost:3001";
+
 export default function PayrollsPanel({ isOpen, onClose, userAddress }: PayrollsPanelProps) {
-  // Placeholder data - will fetch from API in next step
-  const payrolls: Payroll[] = [];
-  const isLoading = false;
+  const [payrolls, setPayrolls] = useState<Payroll[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch payrolls when panel opens and user is connected
+  useEffect(() => {
+    if (!isOpen || !userAddress) return;
+
+    const fetchPayrolls = async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(`${AGENT_API_URL}/api/payrolls/${userAddress}`);
+        if (!response.ok) throw new Error("Failed to fetch payrolls");
+        const data = await response.json();
+        setPayrolls(data);
+      } catch (err) {
+        setError((err as Error).message);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchPayrolls();
+  }, [isOpen, userAddress]);
 
   return (
     <>
