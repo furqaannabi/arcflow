@@ -79,11 +79,11 @@ export default function TransactionAction({ to, data, description, value = "0", 
       <div className="bg-gray-50 dark:bg-muted rounded p-3 mb-4 text-xs font-mono text-gray-500 dark:text-muted-foreground overflow-hidden">
         <div className="flex gap-2 mb-1 overflow-hidden">
           <span className="font-bold shrink-0">To:</span>
-          <span className="truncate">{to}</span>
+          <span className="truncate">{to.slice(0, 6)}...{to.slice(-4)}</span>
         </div>
         <div className="flex gap-2 overflow-hidden">
           <span className="font-bold shrink-0">Data:</span>
-          <span className="truncate">{data.slice(0, 10)}...{data.slice(-10)}</span>
+          <span className="text-gray-400">{data.slice(0, 10)}... (hidden)</span>
         </div>
       </div>
 
