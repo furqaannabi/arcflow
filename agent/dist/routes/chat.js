@@ -54,7 +54,7 @@ const tools = [
         type: "function",
         function: {
             name: "parse_csv_recipients",
-            description: "Set employee wallet addresses and payment amounts in USDC. IMPORTANT: Amounts are ABSOLUTE USDC values (e.g., if user says 'pay Alice 100 USDC', the amount is '100', NOT a percentage or ratio). When parsing from user text, extract EXACT dollar amounts stated. Use 'recipients' array when parsing from user's plain text. Use 'csvData' only for actual CSV file uploads with headers.",
+            description: "Set employee wallet addresses and payment amounts. Use 'recipients' array when parsing from a user's plain text message (you extract the addresses and amounts). Use 'csvData' only when the user uploads or pastes a proper CSV file with headers.",
             parameters: {
                 type: "object",
                 properties: {
@@ -74,7 +74,7 @@ const tools = [
                                 },
                                 amount: {
                                     type: "string",
-                                    description: "USDC amount as a string - must be the ABSOLUTE payment amount in USDC (e.g., '100' for 100 USDC, '50.25' for 50.25 USDC). DO NOT use percentages or ratios.",
+                                    description: "USDC amount as a string (e.g., '100' or '1.50')",
                                 },
                             },
                             required: ["address", "amount"],
@@ -388,7 +388,8 @@ async function executeTool(name, args, pendingPayroll) {
                         trim: true,
                     });
                     recipients = records.map((record) => ({
-                        wallet: validateAddr(record.address),
+                        // Support both 'address' and 'addresses' column headers
+                        wallet: validateAddr(record.address || record.addresses),
                         amount: parseUnits(record.amount, 6),
                     }));
                 }
@@ -776,10 +777,9 @@ Your capabilities:
 
 Workflow for new payroll:
 1. Greet the user and ask how you can help
-2. Ask for the payroll date and time — the user MUST provide a full date AND time (e.g., "15th June 2025 at 2:30 PM UTC" or "2025-06-15T14:30:00Z"). Do NOT ask how many days — always ask for a specific date and time. ALWAYS suggest dates in the future starting from the CURRENT DATE shown above.
+2. Ask for the payroll date and time — the user MUST provide a full date AND time (e.g., "15th June 2026 at 2:30 PM UTC" or "2026-06-15T14:30:00Z"). Do NOT ask how many days — always ask for a specific date and time. ALWAYS suggest dates in the future starting from the CURRENT DATE shown above.
 3. ALWAYS call get_current_time first before setting the payroll date with set_payroll_date — this validates the date is in the future. Users cannot set a past date or time.
-4. Ask for employee data — users can type it in any format (e.g., "pay 0xABC 100 and 0xDEF 200") or upload a CSV file. When the user gives plain text, YOU (the AI) extract the wallet addresses and amounts and pass them as the 'recipients' array to parse_csv_recipients. Only use the 'csvData' parameter for actual CSV files.
-   **CRITICAL FOR AMOUNTS: Extract ABSOLUTE USDC values, NOT percentages or ratios. If user says "total 200 USDC" with amounts 100, 50, 50 - use exactly those numbers ("100", "50", "50"), not ("1.00", "0.50", "0.50").**
+4. Ask for employee data — users can type it in any format (e.g., "pay 0xABC 100 and 0xDEF 200") or upload a CSV file. When the user gives plain text, YOU (the AI) extract the wallet addresses and amounts and pass them as the 'recipients' array to parse_csv_recipients. Only use the 'csvData' parameter for actual CSV files. For CSV uploads, pass the raw CSV content to the 'csvData' parameter - do NOT manually parse it.
 5. Show expected returns — yield is calculated automatically from deposit (now) until the payroll date. Do NOT ask the user for a number of days. Just call calculate_expected_return with the amount and it will compute everything. Make it clear that 100% of the yield goes to the company as profit — employees receive their exact payroll amounts only.
 6. Guide through approval transaction (if needed)
 7. Generate deposit transaction — funds go into Uniswap V4 USDC-USDT pool, yield accrues to the company
