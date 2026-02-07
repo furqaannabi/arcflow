@@ -396,7 +396,7 @@ export class YellowChunkingService {
     const rpcUrl = getRpcUrl(CHAIN_IDS.SEPOLIA, this.alchemyApiKey) || "https://1rpc.io/sepolia";
 
     try {
-      this.sdkClient = getYellowSDKClient(this.privateKey, rpcUrl);
+      this.sdkClient = getYellowSDKClient(this.privateKey);
       await this.sdkClient.connect();
       await this.sdkClient.authenticate();
       this.sdkInitialized = true;

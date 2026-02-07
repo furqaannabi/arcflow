@@ -14,11 +14,11 @@ import {
   createWalletClient,
   http,
   type Address,
-  type PublicClient,
 } from "viem";
-import { sepolia } from "viem/chains";
+import { baseSepolia } from "viem/chains";
 import { privateKeyToAccount, generatePrivateKey, type PrivateKeyAccount } from "viem/accounts";
 import WebSocket from "ws";
+import { CHAIN_IDS, getRpcUrl } from "./config";
 
 // ============ Configuration ============
 
@@ -62,7 +62,7 @@ interface PendingOperation {
 export class YellowSDKClient {
   private config: YellowConfig;
   private client!: NitroliteClient;
-  private publicClient: PublicClient;
+  private publicClient: any;
   private walletClient: ReturnType<typeof createWalletClient>;
   private ws: WebSocket | null = null;
   private sessionSigner: ReturnType<typeof createECDSAMessageSigner>;
@@ -77,17 +77,17 @@ export class YellowSDKClient {
   private authReject: ((error: Error) => void) | null = null;
   private authParams: any;
 
-  constructor(privateKey: string, rpcUrl: string, config?: Partial<YellowConfig>) {
+  constructor(privateKey: string, config?: Partial<YellowConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.account = privateKeyToAccount(privateKey as `0x${string}`);
-
+    const rpcUrl = getRpcUrl(CHAIN_IDS.BASE_SEPOLIA, process.env.ALCHEMY_API_KEY);
     this.publicClient = createPublicClient({
-      chain: sepolia,
+      chain: baseSepolia,
       transport: http(rpcUrl),
-    });
+    }) as any;
 
     this.walletClient = createWalletClient({
-      chain: sepolia,
+      chain: baseSepolia,
       transport: http(rpcUrl),
       account: this.account,
     });
@@ -561,14 +561,13 @@ let sdkInstance: YellowSDKClient | null = null;
 
 export function getYellowSDKClient(
   privateKey?: string,
-  rpcUrl?: string,
   config?: Partial<YellowConfig>
 ): YellowSDKClient {
   if (!sdkInstance) {
-    if (!privateKey || !rpcUrl) {
-      throw new Error("Private key and RPC URL required for first initialization");
+    if (!privateKey) {
+      throw new Error("Private key required for first initialization");
     }
-    sdkInstance = new YellowSDKClient(privateKey, rpcUrl, config);
+    sdkInstance = new YellowSDKClient(privateKey, config);
   }
   return sdkInstance;
 }

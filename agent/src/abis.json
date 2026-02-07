@@ -55,7 +55,13 @@
             { "name": "provider", "type": "address" },
             { "name": "liquidity", "type": "uint128" },
             { "name": "usdcDeposited", "type": "uint256" },
-    
+            { "name": "depositTime", "type": "uint256" },
+            { "name": "payrollDate", "type": "uint256" },
+            { "name": "payrollStateHash", "type": "bytes32" },
+            { "name": "accumulatedYield", "type": "uint256" },
+            { "name": "sourceChainId", "type": "uint256" },
+            { "name": "currentChainId", "type": "uint256" },
+            { "name": "migrationCount", "type": "uint256" },
             {
               "name": "recipients",
               "type": "tuple[]",
@@ -64,19 +70,11 @@
                 { "name": "amount", "type": "uint256" }
               ]
             },
-    
-            { "name": "depositTime", "type": "uint256" },
-            { "name": "payrollDate", "type": "uint256" },
-            { "name": "payrollStateHash", "type": "bytes32" },
-            { "name": "accumulatedYield", "type": "uint256" },
-            { "name": "sourceChainId", "type": "uint256" },
-            { "name": "currentChainId", "type": "uint256" },
-            { "name": "migrationCount", "type": "uint256" },
             { "name": "recipientsHash", "type": "bytes32" }
           ]
         }
       ]
-    },
+    },    
     {
       "name": "getProviderPayrolls",
       "type": "function",
