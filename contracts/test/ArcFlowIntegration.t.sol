@@ -456,7 +456,8 @@ contract ArcFlowIntegrationTest is Test, Deployers {
         vm.prank(agent);
         stateManager.updateChainApy(137, 350); // 3.5% - diff = 50bps
 
-        (migrate, uint256 targetChain, ) = migration.shouldMigrate(payrollId);
+        uint256 targetChain;
+        (migrate, targetChain, ) = migration.shouldMigrate(payrollId);
         assertTrue(migrate, "Should migrate with >=0.5% diff");
         assertEq(targetChain, 137);
     }

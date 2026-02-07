@@ -2,10 +2,10 @@
 pragma solidity ^0.8.26;
 
 import {Script, console} from "forge-std/Script.sol";
-import {ChainConfig} from "./ChainConfig.sol";
+// ChainConfig no longer needed — deployment JSONs already include poolManager
 
 /// @notice Merges all deployment files into a single addresses.json for the agent
-/// @dev Run after deploying to all chains. Injects poolManager from ChainConfig.
+/// @dev Run after deploying to all chains.
 contract MergeDeploymentsScript is Script {
     function run() public {
         console.log("=== Merging Deployments ===");
@@ -15,36 +15,21 @@ contract MergeDeploymentsScript is Script {
         string memory sepolia = _tryReadFile("deployments/sepolia.json");
         string memory arcTestnet = _tryReadFile("deployments/arcTestnet.json");
 
-        ChainConfig.Config memory bsConfig = ChainConfig.getBaseSepolia();
-        ChainConfig.Config memory sepConfig = ChainConfig.getSepolia();
-
-        // Build merged JSON
+        // Build merged JSON — deployment files already contain all fields (including poolManager)
         string memory merged = "{\n";
         bool hasContent = false;
 
         if (bytes(baseSepolia).length > 0) {
-            merged = string.concat(
-                merged,
-                '  "baseSepolia": {\n',
-                '    "poolManager": "', vm.toString(bsConfig.poolManager), '",\n',
-                '    ', _extractFields(baseSepolia), '\n',
-                '  }'
-            );
+            merged = string.concat(merged, '  "baseSepolia": ', _extractContent(baseSepolia));
             hasContent = true;
-            console.log("Added: baseSepolia (poolManager:", bsConfig.poolManager, ")");
+            console.log("Added: baseSepolia");
         }
 
         if (bytes(sepolia).length > 0) {
             if (hasContent) merged = string.concat(merged, ",\n");
-            merged = string.concat(
-                merged,
-                '  "sepolia": {\n',
-                '    "poolManager": "', vm.toString(sepConfig.poolManager), '",\n',
-                '    ', _extractFields(sepolia), '\n',
-                '  }'
-            );
+            merged = string.concat(merged, '  "sepolia": ', _extractContent(sepolia));
             hasContent = true;
-            console.log("Added: sepolia (poolManager:", sepConfig.poolManager, ")");
+            console.log("Added: sepolia");
         }
 
         if (bytes(arcTestnet).length > 0) {
@@ -68,31 +53,6 @@ contract MergeDeploymentsScript is Script {
         } catch {
             return "";
         }
-    }
-
-    /// @dev Extract the key-value fields from the inner object (without braces)
-    function _extractFields(string memory json) internal pure returns (string memory) {
-        bytes memory inner = bytes(_extractContent(json));
-        // Strip leading { and trailing }
-        if (inner.length < 2) return "";
-
-        uint start = 1; // skip {
-        uint end = inner.length - 1; // skip }
-
-        // Skip leading whitespace/newlines
-        while (start < end && (inner[start] == " " || inner[start] == "\n" || inner[start] == "\r" || inner[start] == "\t")) {
-            start++;
-        }
-        // Skip trailing whitespace/newlines
-        while (end > start && (inner[end - 1] == " " || inner[end - 1] == "\n" || inner[end - 1] == "\r" || inner[end - 1] == "\t")) {
-            end--;
-        }
-
-        bytes memory result = new bytes(end - start);
-        for (uint i = start; i < end; i++) {
-            result[i - start] = inner[i];
-        }
-        return string(result);
     }
 
     /// @dev Extract the inner object { ... } from a deployment JSON like { "key": { ... } }
