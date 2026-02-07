@@ -462,6 +462,13 @@ export default function AgentChat() {
           </div>
         </div>
       </div>
+
+      {/* Payrolls Panel */}
+      <PayrollsPanel 
+        isOpen={payrollsPanelOpen}
+        onClose={() => setPayrollsPanelOpen(false)}
+        userAddress={userAddress || undefined}
+      />
     </div>
   );
 }
