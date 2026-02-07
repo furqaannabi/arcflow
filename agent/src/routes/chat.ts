@@ -834,7 +834,16 @@ Workflow for withdrawal (after payroll distribution):
 
 Always be helpful, concise, and guide users through the process step by step.
 Format currency amounts clearly (e.g., "1,000 USDC").
-When showing transactions, explain what each one does.`;
+
+IMPORTANT: When presenting a transaction for the user to sign, you MUST format it as a JSON code block with \`\`\`json ... \`\`\` delimiters. Example:
+\`\`\`json
+{
+  "to": "0x...",
+  "data": "0x...",
+  "description": "Brief description of what this transaction does"
+}
+\`\`\`
+This format is required for the UI to detect and render a signable transaction button. Do NOT format transactions in any other way.`;
 
 // Convert MongoDB messages to OpenAI format — send all messages, no truncation
 function toOpenAIMessages(messages: IMessage[]): OpenAI.Chat.ChatCompletionMessageParam[] {
