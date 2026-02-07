@@ -29,30 +29,45 @@ export default function ChatMessage({ role, content, timestamp, onTransactionSuc
   const { textPart, transaction } = useMemo(() => {
     if (isUser || isSystem) return { textPart: content, transaction: null };
 
-    // Look for JSON code blocks: ```json ... ```
-    // We try to find a block that looks like a transaction
-    const jsonBlockRegex = /```json\s*(\{[\s\S]*?\})\s*```/;
-    const match = content.match(jsonBlockRegex);
+    let workingContent = content;
+    let foundTransaction: TransactionData | null = null;
 
+    // Pattern 1: ```json { ... } ``` (with code fences)
+    const jsonBlockRegex = /```json\s*(\{[\s\S]*?\})\s*```/g;
+    // Pattern 2: Bare JSON object with tx fields (no fences)
+    const bareJsonRegex = /\{[\s\S]*?"to"\s*:\s*"0x[a-fA-F0-9]+"[\s\S]*?"data"\s*:\s*"0x[a-fA-F0-9]+"[\s\S]*?\}/g;
+
+    // Try code-fenced JSON first
+    let match = jsonBlockRegex.exec(content);
     if (match) {
       try {
         const jsonContent = JSON.parse(match[1]);
-        // Check if it has transaction fields
         if (jsonContent.to && jsonContent.data) {
-          const description = jsonContent.description || "Sign Transaction";
-          // Remove the code block from the display text to avoid duplication
-          const textPart = content.replace(match[0], "").trim();
-          return {
-            textPart,
-            transaction: { ...jsonContent, description } as TransactionData,
-          };
+          foundTransaction = { ...jsonContent, description: jsonContent.description || "Sign Transaction" };
+          workingContent = workingContent.replace(match[0], "").trim();
         }
-      } catch (e) {
-        // failed to parse or not a transaction, ignore
+      } catch (e) { /* ignore parse errors */ }
+    }
+
+    // Also try bare JSON blocks (in case AI outputs without fences)
+    if (!foundTransaction) {
+      match = bareJsonRegex.exec(content);
+      if (match) {
+        try {
+          const jsonContent = JSON.parse(match[0]);
+          if (jsonContent.to && jsonContent.data) {
+            foundTransaction = { ...jsonContent, description: jsonContent.description || "Sign Transaction" };
+            workingContent = workingContent.replace(match[0], "").trim();
+          }
+        } catch (e) { /* ignore parse errors */ }
       }
     }
 
-    return { textPart: content, transaction: null };
+    // Even if we found transaction via props, remove any remaining JSON blocks
+    workingContent = workingContent.replace(/```json\s*\{[\s\S]*?\}\s*```/g, "").trim();
+    workingContent = workingContent.replace(/\{[\s\S]*?"to"\s*:\s*"0x[a-fA-F0-9]+"[\s\S]*?"data"\s*:\s*"0x[a-fA-F0-9]+"[\s\S]*?\}/g, "").trim();
+
+    return { textPart: workingContent, transaction: foundTransaction };
   }, [content, isUser, isSystem]);
 
   if (isSystem) {
@@ -79,7 +94,7 @@ export default function ChatMessage({ role, content, timestamp, onTransactionSuc
         )}
       </div>
 
-      <div className={cn("flex flex-col max-w-[80%]", isUser ? "items-end" : "items-start")}>
+      <div className={cn("flex flex-col min-w-0", isUser ? "items-end" : "items-start")} style={{ maxWidth: 'min(80%, 520px)' }}>
         {/* Helper name */}
         <span className="text-xs text-gray-400 dark:text-gray-500 mb-1 px-1">
           {isUser ? "You" : "ArcFlow"}
@@ -93,7 +108,7 @@ export default function ChatMessage({ role, content, timestamp, onTransactionSuc
               : "bg-white dark:bg-card text-gray-800 dark:text-foreground rounded-tl-sm border border-gray-100 dark:border-border"
           )}
         >
-          <div className="markdown-content">
+          <div className="markdown-content break-words overflow-hidden" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
             <ReactMarkdown 
               remarkPlugins={[remarkGfm]}
               components={{
@@ -107,7 +122,7 @@ export default function ChatMessage({ role, content, timestamp, onTransactionSuc
                   return inline ? (
                     <code className="bg-gray-200 dark:bg-gray-800 px-1 py-0.5 rounded text-xs font-mono" {...props}>{children}</code>
                   ) : (
-                    <code className="block bg-gray-200 dark:bg-gray-800 p-2 rounded text-xs font-mono my-2 overflow-x-auto" {...props}>{children}</code>
+                    <code className="block bg-gray-200 dark:bg-gray-800 p-2 rounded text-xs font-mono my-2 overflow-x-auto whitespace-pre-wrap" style={{ overflowWrap: 'anywhere', wordBreak: 'break-all' }} {...props}>{children}</code>
                   );
                 }
               }}

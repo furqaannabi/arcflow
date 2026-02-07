@@ -82,7 +82,7 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
                 },
                 amount: {
                   type: "string",
-                  description: "USDC amount as a string (e.g., '100')",
+                  description: "USDC amount as a string (e.g., '100' or '1.50')",
                 },
               },
               required: ["address", "amount"],
@@ -414,8 +414,9 @@ async function executeTool(
             trim: true,
           });
           recipients = records.map(
-            (record: { address: string; amount: string }) => ({
-              wallet: validateAddr(record.address),
+            (record: Record<string, string>) => ({
+              // Support both 'address' and 'addresses' column headers
+              wallet: validateAddr(record.address || record.addresses),
               amount: parseUnits(record.amount, 6),
             })
           );
@@ -808,7 +809,24 @@ async function executeTool(
   }
 }
 
-const SYSTEM_PROMPT = `You are ArcFlow, an AI assistant that helps companies distribute payroll using DeFi.
+// Dynamic system prompt with current date
+function getSystemPrompt(): string {
+  const now = new Date();
+  const currentDate = now.toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'UTC',
+    timeZoneName: 'short',
+  });
+  
+  return `You are ArcFlow, an AI assistant that helps companies distribute payroll using DeFi.
+
+**CURRENT DATE AND TIME: ${currentDate}**
+When suggesting dates for payroll, always suggest dates AFTER the current date shown above. Never suggest dates that have already passed.
 
 Deposited funds are placed into a Uniswap V4 USDC-USDT liquidity pool to earn yield from the moment of deposit until the payroll date. 100% of the earned APY/yield goes to the company — employees receive exactly their payroll amounts, and all yield profits are kept by the company.
 
@@ -826,9 +844,9 @@ Your capabilities:
 
 Workflow for new payroll:
 1. Greet the user and ask how you can help
-2. Ask for the payroll date and time — the user MUST provide a full date AND time (e.g., "15th June 2025 at 2:30 PM UTC" or "2025-06-15T14:30:00Z"). Do NOT ask how many days — always ask for a specific date and time.
+2. Ask for the payroll date and time — the user MUST provide a full date AND time (e.g., "15th June 2026 at 2:30 PM UTC" or "2026-06-15T14:30:00Z"). Do NOT ask how many days — always ask for a specific date and time. ALWAYS suggest dates in the future starting from the CURRENT DATE shown above.
 3. ALWAYS call get_current_time first before setting the payroll date with set_payroll_date — this validates the date is in the future. Users cannot set a past date or time.
-4. Ask for employee data — users can type it in any format (e.g., "pay 0xABC 100 and 0xDEF 200") or upload a CSV file. When the user gives plain text, YOU (the AI) extract the wallet addresses and amounts and pass them as the 'recipients' array to parse_csv_recipients. Only use the 'csvData' parameter for actual CSV files.
+4. Ask for employee data — users can type it in any format (e.g., "pay 0xABC 100 and 0xDEF 200") or upload a CSV file. When the user gives plain text, YOU (the AI) extract the wallet addresses and amounts and pass them as the 'recipients' array to parse_csv_recipients. Only use the 'csvData' parameter for actual CSV files. For CSV uploads, pass the raw CSV content to the 'csvData' parameter - do NOT manually parse it.
 5. Show expected returns — yield is calculated automatically from deposit (now) until the payroll date. Do NOT ask the user for a number of days. Just call calculate_expected_return with the amount and it will compute everything. Make it clear that 100% of the yield goes to the company as profit — employees receive their exact payroll amounts only.
 6. Guide through approval transaction (if needed)
 7. Generate deposit transaction — funds go into Uniswap V4 USDC-USDT pool, yield accrues to the company
@@ -844,7 +862,17 @@ Workflow for withdrawal (after payroll distribution):
 
 Always be helpful, concise, and guide users through the process step by step.
 Format currency amounts clearly (e.g., "1,000 USDC").
-When showing transactions, explain what each one does.`;
+
+IMPORTANT: When presenting a transaction for the user to sign, you MUST format it as a JSON code block with \`\`\`json ... \`\`\` delimiters. Example:
+\`\`\`json
+{
+  "to": "0x...",
+  "data": "0x...",
+  "description": "Brief description of what this transaction does"
+}
+\`\`\`
+This format is required for the UI to detect and render a signable transaction button. Do NOT format transactions in any other way.`;
+}
 
 // Convert MongoDB messages to OpenAI format — send all messages, no truncation
 function toOpenAIMessages(messages: IMessage[]): OpenAI.Chat.ChatCompletionMessageParam[] {
@@ -889,7 +917,7 @@ router.post("/chat", upload.single("file"), async (req: Request, res: Response) 
       sessionId = uuidv4();
       session = new ChatSession({
         sessionId,
-        messages: [{ role: "system", content: SYSTEM_PROMPT, timestamp: new Date() }],
+        messages: [{ role: "system", content: getSystemPrompt(), timestamp: new Date() }],
         pendingPayroll: {},
         lastActivity: new Date(),
       });

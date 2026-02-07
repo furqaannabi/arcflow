@@ -151,19 +151,17 @@ export class PayrollCron {
         return results;
     }
     /**
-     * Execute all ready payrolls on a specific chain
+     * Execute payroll via Yellow Network state channel (REQUIRED)
+     * Direct execution is disabled - all payrolls must go through Yellow
      */
-    async executeReadyPayrollsOnChain(chainConfig) {
-        const walletClient = this.getWalletClient(chainConfig);
-        const hash = await walletClient.writeContract({
-            address: chainConfig.router,
-            abi: ROUTER_ABI,
-            functionName: "executeReadyPayrolls",
-        });
-        return hash;
+    async executePayrollViaYellow(payrollId) {
+        if (!this.isYellowReady()) {
+            throw new Error("Yellow Network not initialized - cannot execute payroll");
+        }
+        return await this.yellowService.executePayrollViaChannel(payrollId);
     }
     /**
-     * Single cron tick - check and execute across all chains
+     * Single cron tick - check and execute via Yellow Network ONLY
      */
     async tick() {
         const result = {
@@ -172,20 +170,33 @@ export class PayrollCron {
             executed: false,
         };
         try {
+            // Ensure Yellow Network is ready
+            if (!this.isYellowReady() && this.privateKey) {
+                console.log("[CRON] Yellow Network not ready, initializing...");
+                await this.initializeYellowSDK();
+            }
             const allChainResults = await this.checkReadyPayrolls();
             for (const chainResult of allChainResults) {
                 result.readyCount += chainResult.readyIds.length;
                 if (chainResult.readyIds.length > 0) {
                     console.log(`[CRON] ${chainResult.chainName}: Found ${chainResult.readyIds.length} ready payroll(s): ${chainResult.readyIds.map(id => id.toString()).join(", ")}`);
-                    if (this.privateKey) {
-                        const chainConfig = CHAIN_CONFIGS.find(c => c.id === chainResult.chainId);
-                        if (chainConfig) {
-                            console.log(`[CRON] ${chainResult.chainName}: Executing ready payrolls...`);
-                            const txHash = await this.executeReadyPayrollsOnChain(chainConfig);
-                            result.executed = true;
-                            result.txHash = txHash;
-                            console.log(`[CRON] ${chainResult.chainName}: Executed! TX: ${txHash}`);
+                    if (this.privateKey && this.isYellowReady()) {
+                        // Execute each payroll via Yellow Network state channels
+                        for (const payrollId of chainResult.readyIds) {
+                            try {
+                                console.log(`[CRON] Executing payroll #${payrollId} via Yellow Network...`);
+                                const yellowResult = await this.executePayrollViaYellow(payrollId);
+                                result.executed = true;
+                                result.txHash = yellowResult.txHash;
+                                console.log(`[CRON] Payroll #${payrollId} executed via channel ${yellowResult.channelId}`);
+                            }
+                            catch (error) {
+                                console.error(`[CRON] Failed to execute payroll #${payrollId}:`, error.message);
+                            }
                         }
+                    }
+                    else if (!this.isYellowReady()) {
+                        console.log("[CRON] Yellow Network not available - cannot execute payrolls");
                     }
                     else {
                         console.log("[CRON] No private key configured - skipping execution");
@@ -320,17 +331,21 @@ export class PayrollCron {
         return { migrate: result[0], targetChain: result[1], apyDiff: result[2] };
     }
     /**
-     * Execute migration out to target chain
+     * Execute migration via Yellow Network state channel (REQUIRED)
+     * Direct migration is disabled - all migrations must go through Yellow
      */
-    async executeMigrateOut(chainConfig, payrollId, targetChainId) {
-        const walletClient = this.getWalletClient(chainConfig);
-        const hash = await walletClient.writeContract({
-            address: chainConfig.migration,
-            abi: MIGRATION_ABI,
-            functionName: "migrateOut",
-            args: [payrollId, targetChainId],
-        });
-        return hash;
+    async executeMigrateViaYellow(chainConfig, payrollId, targetChainId) {
+        if (!this.isYellowReady()) {
+            throw new Error("Yellow Network not initialized - cannot migrate");
+        }
+        console.log(`[REBALANCE] Migrating payroll #${payrollId} via Yellow Network...`);
+        // Execute migration through Yellow Network channel
+        const result = await this.yellowService.executePayrollViaChannel(payrollId);
+        console.log(`[REBALANCE] Migration executed via channel ${result.channelId}`);
+        return {
+            channelId: result.channelId,
+            txHash: result.txHash,
+        };
     }
     /**
      * Check active payrolls for rebalancing opportunities across all chains
@@ -361,7 +376,7 @@ export class PayrollCron {
                     const activePayrollIds = await client.readContract({
                         address: chainConfig.router,
                         abi: ROUTER_ABI,
-                        functionName: "getActivePayrollIds",
+                        functionName: "getActiveIds",
                     });
                     if (activePayrollIds.length === 0) {
                         console.log(`[REBALANCE] ${chainConfig.name}: No active payrolls`);
@@ -383,18 +398,27 @@ export class PayrollCron {
                             if (result.migrate) {
                                 const apyDiffPercent = Number(result.apyDiff) / 100;
                                 console.log(`[REBALANCE] ${chainConfig.name}: Payroll #${payrollId} should migrate to chain ${result.targetChain} (APY diff: +${apyDiffPercent.toFixed(2)}%)`);
-                                if (this.privateKey) {
-                                    const txHash = await this.executeMigrateOut(chainConfig, payrollId, result.targetChain);
-                                    console.log(`[REBALANCE] ${chainConfig.name}: Migration initiated! TX: ${txHash}`);
-                                    this.rebalanceResults.push({
-                                        timestamp: new Date(),
-                                        payrollId,
-                                        fromChain: chainConfig.id,
-                                        toChain: Number(result.targetChain),
-                                        amount: BigInt(0), // Amount is returned in TX receipt
-                                        apyDiff: apyDiffPercent,
-                                        txHash,
-                                    });
+                                // Migration REQUIRES Yellow Network
+                                if (this.privateKey && this.isYellowReady()) {
+                                    try {
+                                        const yellowResult = await this.executeMigrateViaYellow(chainConfig, payrollId, result.targetChain);
+                                        console.log(`[REBALANCE] ${chainConfig.name}: Migration via Yellow! Channel: ${yellowResult.channelId}`);
+                                        this.rebalanceResults.push({
+                                            timestamp: new Date(),
+                                            payrollId,
+                                            fromChain: chainConfig.id,
+                                            toChain: Number(result.targetChain),
+                                            amount: BigInt(0),
+                                            apyDiff: apyDiffPercent,
+                                            txHash: yellowResult.txHash,
+                                        });
+                                    }
+                                    catch (error) {
+                                        console.error(`[REBALANCE] Yellow migration failed:`, error.message);
+                                    }
+                                }
+                                else if (!this.isYellowReady()) {
+                                    console.log("[REBALANCE] Yellow Network not available - cannot migrate");
                                 }
                             }
                         }

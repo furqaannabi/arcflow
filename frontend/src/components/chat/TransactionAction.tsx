@@ -43,9 +43,25 @@ export default function TransactionAction({ to, data, description, value = "0", 
         onSuccess(hash);
       }
     } catch (error) {
-      console.error("Transaction failed:", error);
+      const fullError = (error as Error).message || "Transaction failed";
+      console.error("Transaction failed (full error):", fullError);
+      
+      // Parse error and show user-friendly message
+      let friendlyMessage = "Transaction failed. Please try again.";
+      if (fullError.toLowerCase().includes("reverted")) {
+        friendlyMessage = "Transaction was rejected by the contract. This may be due to insufficient allowance or balance.";
+      } else if (fullError.toLowerCase().includes("rejected") || fullError.toLowerCase().includes("denied")) {
+        friendlyMessage = "Transaction was rejected by user.";
+      } else if (fullError.toLowerCase().includes("insufficient")) {
+        friendlyMessage = "Insufficient funds for this transaction.";
+      } else if (fullError.toLowerCase().includes("gas")) {
+        friendlyMessage = "Transaction ran out of gas. Try again with higher gas limit.";
+      } else if (fullError.toLowerCase().includes("nonce")) {
+        friendlyMessage = "Transaction nonce issue. Please refresh and try again.";
+      }
+      
       setStatus("error");
-      setErrorMessage((error as Error).message || "Transaction failed");
+      setErrorMessage(friendlyMessage);
     }
   };
 
@@ -71,26 +87,44 @@ export default function TransactionAction({ to, data, description, value = "0", 
     );
   }
 
+  // Determine transaction type from description
+  const getTransactionType = () => {
+    const lowerDesc = description.toLowerCase();
+    if (lowerDesc.includes("approve") || lowerDesc.includes("approval")) return "APPROVAL";
+    if (lowerDesc.includes("deposit")) return "DEPOSIT";
+    if (lowerDesc.includes("withdraw")) return "WITHDRAWAL";
+    return "TRANSACTION";
+  };
+
+  const txType = getTransactionType();
+
   return (
     <div className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg p-4 mt-2 shadow-sm transition-colors">
-      <h4 className="font-semibold text-gray-900 dark:text-foreground mb-2">Action Required</h4>
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-xs font-bold uppercase tracking-wide text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-2 py-0.5 rounded">
+          {txType}
+        </span>
+        <h4 className="font-semibold text-gray-900 dark:text-foreground">Action Required</h4>
+      </div>
       <p className="text-sm text-gray-600 dark:text-muted-foreground mb-4">{description}</p>
       
-      <div className="bg-gray-50 dark:bg-muted rounded p-3 mb-4 text-xs font-mono text-gray-500 dark:text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap">
-        <div className="flex gap-2 mb-1">
-          <span className="font-bold">To:</span> {to}
+      <div className="bg-gray-50 dark:bg-muted rounded p-3 mb-4 text-xs font-mono text-gray-500 dark:text-muted-foreground overflow-hidden">
+        <div className="flex gap-2 mb-1 overflow-hidden">
+          <span className="font-bold shrink-0">To:</span>
+          <span className="truncate">{to.slice(0, 6)}...{to.slice(-4)}</span>
         </div>
-        <div className="flex gap-2">
-          <span className="font-bold">Data:</span> {data.slice(0, 10)}...{data.slice(-10)}
+        <div className="flex gap-2 overflow-hidden">
+          <span className="font-bold shrink-0">Data:</span>
+          <span className="text-gray-400">{data.slice(0, 10)}... </span>
         </div>
       </div>
 
       {status === "error" && (
-        <div className="mb-3 p-3 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-900/30 rounded-lg flex items-start gap-2 animate-in fade-in slide-in-from-top-1">
+        <div className="mb-3 p-3 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-900/30 rounded-lg flex items-start gap-2 animate-in fade-in slide-in-from-top-1 overflow-hidden">
           <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
-          <div className="text-sm text-red-600 dark:text-red-400 break-words">
-            <span className="font-semibold block mb-0.5">Transaction Error</span>
-            {errorMessage}
+          <div className="text-sm text-red-600 dark:text-red-400 min-w-0">
+            <span className="font-semibold block mb-0.5">Transaction Failed</span>
+            <span className="block">{errorMessage}</span>
           </div>
         </div>
       )}

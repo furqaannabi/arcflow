@@ -4,6 +4,7 @@ import "dotenv/config";
 import { chatRouter } from "./routes/chat";
 import { PayrollCron } from "./cron";
 import { YellowChunkingService, CHAIN_CONFIGS } from "./yellow";
+import { connectDB } from "./db";
 const app = express();
 const PORT = process.env.PORT || 3001;
 const CRON_INTERVAL = parseInt(process.env.CRON_INTERVAL || "60000"); // Default 1 minute
@@ -203,9 +204,17 @@ app.post("/api/yellow/cross-chain-transfer", (req, res) => {
 });
 // Chat endpoint
 app.use("/api", chatRouter);
-app.listen(PORT, () => {
-    console.log(`ArcFlow Agent running on http://localhost:${PORT}`);
-    console.log(`Chat endpoint: POST /api/chat`);
-    // Start cron automatically
-    cron.start(CRON_INTERVAL);
+// Connect to MongoDB and start server
+connectDB()
+    .then(() => {
+    app.listen(PORT, () => {
+        console.log(`ArcFlow Agent running on http://localhost:${PORT}`);
+        console.log(`Chat endpoint: POST /api/chat`);
+        // Start cron automatically
+        cron.start(CRON_INTERVAL);
+    });
+})
+    .catch((err) => {
+    console.error("Failed to connect to MongoDB:", err);
+    process.exit(1);
 });
