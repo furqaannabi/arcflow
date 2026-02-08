@@ -22,7 +22,9 @@
       "WebFetch(domain:docs.uniswap.org)",
       "Bash(findstr:*)",
       "WebFetch(domain:developers.circle.com)",
-      "WebFetch(domain:testnet.arcscan.app)"
+      "WebFetch(domain:testnet.arcscan.app)",
+      "WebFetch(domain:4byte.sourcify.dev)",
+      "Bash(python3:*)"
     ]
   }
 }

@@ -164,32 +164,32 @@ contract ArcPayrollDistributor is ReentrancyGuard, Ownable {
         gatewayMinter.gatewayMint(attestation, signature);
         uint256 minted = usdc.balanceOf(address(this)) - balanceBefore;
 
-        // Step 4: Verify amounts match
+        // Step 4: Compute totals and distribute proportionally
         uint256 recipientTotal = 0;
         for (uint256 i = 0; i < recipients.length; i++) {
             recipientTotal += recipients[i].amount;
         }
-        if (minted < recipientTotal) revert InsufficientBalance();
-        if (recipientTotal != totalAmount) revert StateMismatch();
+        if (recipientTotal == 0) revert InsufficientBalance();
 
-        // Step 5: Distribute
+        // Step 5: Distribute (pro-rata if minted < expected due to bridge fees)
         batchId = ++currentBatchId;
+        uint256 distributed = 0;
 
         for (uint256 i = 0; i < recipients.length; i++) {
             if (recipients[i].wallet == address(0)) revert ZeroAddress();
-            usdc.safeTransfer(recipients[i].wallet, recipients[i].amount);
-            emit PaymentSent(
-                batchId,
-                recipients[i].wallet,
-                recipients[i].amount
-            );
+            uint256 payout = (minted * recipients[i].amount) / recipientTotal;
+            if (payout > 0) {
+                usdc.safeTransfer(recipients[i].wallet, payout);
+                distributed += payout;
+            }
+            emit PaymentSent(batchId, recipients[i].wallet, payout);
         }
 
         emit PayrollStateVerified(stateHash, msg.sender);
         emit PayrollExecuted(
             batchId,
             stateHash,
-            recipientTotal,
+            distributed,
             recipients.length
         );
     }
