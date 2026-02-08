@@ -416,7 +416,7 @@ Agent                   Source Chain              Gateway              Target Ch
 | Cron | Interval | What It Does |
 |------|----------|--------------|
 | **Execute** | 60s | Fetches `getActiveIds()` + `getPos()`, filters `payrollDate <= now && !executed`, calls `execute(pid)` |
-| **Distribute** | 15min | Filters `executed && !distributed`, bridges via Gateway burn intent, calls `mintVerifyAndDistribute` on Arc, then `markDistributed` on source chain |
+| **Distribute** | 15min | Filters `executed && !distributed`, bridges via Gateway burn intent, calls `mintVerifyAndDistribute` on Arc, then `markDistributed` on source chain. ~15min delay after execution due to Circle Gateway indexing |
 | **APY Monitor** | 6hr | Fetches USDC/USDT yields from DefiLlama, calls `StateManager.batchUpdateChainApy()` on all chains |
 | **Rebalance** | After APY | Calls `shouldMigrate(pid)` for each active payroll, executes `migrateOut/In` if APY diff > 0.5% |
 
