@@ -168,7 +168,12 @@ export default function Landing() {
                      </li>
                   ))}
                </ul>
-               <Button className="bg-blue-600 rounded-full px-8 hover:bg-blue-700 dark:hover:bg-blue-500">Get Started</Button>
+               <Button 
+                className="h-12 px-8 bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700 text-white rounded-full shadow-lg shadow-blue-600/25 text-base transition-transform hover:scale-105 active:scale-95"
+                onClick={() => isConnected ? navigate('/chat') : connect()}
+               >
+                  {isConnected ? "Go to Chat" : "Get Started"}
+               </Button>
             </div>
             
             <div className="relative">
@@ -261,7 +266,7 @@ export default function Landing() {
                  />
                )}
                <Button 
-                className="h-14 px-8 rounded-full bg-orange-500 hover:bg-orange-600 text-white font-bold shadow-lg shadow-orange-500/20 w-full sm:w-auto"
+                className="h-14 px-8 bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700 text-white rounded-full shadow-lg shadow-blue-600/25 text-lg font-bold transition-transform hover:scale-105 active:scale-95 w-full sm:w-auto"
                 onClick={() => isConnected ? navigate('/chat') : connect()}
                >
                   {isConnected ? "Go to Chat" : "Get Started"}
