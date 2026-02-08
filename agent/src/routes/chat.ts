@@ -1305,4 +1305,34 @@ router.get("/payrolls/:wallet", async (req: Request, res: Response) => {
   }
 });
 
+router.get("/payroll/:id", async (req: Request, res: Response) => {
+  try {
+    const payrollId = parseInt(req.params.id);
+    if (isNaN(payrollId)) {
+      res.status(400).json({ error: "Invalid payroll ID" });
+      return;
+    }
+
+    const pos = await contractService.getPos(BigInt(payrollId));
+
+    res.json({
+      payrollId: Number(pos.payrollId),
+      provider: pos.provider,
+      liquidity: pos.liquidity.toString(),
+      usdcDeposited: pos.usdcDeposited.toString(),
+      depositTime: Number(pos.depositTime),
+      payrollDate: Number(pos.payrollDate),
+      accumulatedYield: pos.accumulatedYield.toString(),
+      currentChainId: Number(pos.currentChainId),
+      recipients: pos.recipients.map((r: any) => ({
+        wallet: r.wallet,
+        amount: r.amount.toString(),
+      })),
+    });
+  } catch (error) {
+    console.error("Payroll fetch error:", error);
+    res.status(500).json({ error: "Failed to fetch payroll" });
+  }
+});
+
 export { router as chatRouter };
