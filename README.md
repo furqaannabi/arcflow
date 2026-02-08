@@ -1,6 +1,27 @@
 # ArcFlow
 
+> **HackMoney 2026** submission | [Live Demo](https://arcflow9.vercel.app/)
+
 Cross-chain payroll management platform with yield optimization. Deposit USDC, earn yield via Uniswap V4 LP positions, and distribute payments through Circle Gateway Bridge to Arc Chain.
+
+## The Problem
+
+Companies hold payroll funds idle for days or weeks before payday. This creates three issues:
+
+1. **Dead capital** — Payroll reserves sit in wallets earning zero yield. A company with $500K monthly payroll loses thousands in potential returns every month.
+2. **Manual execution** — Someone has to remember to trigger payments on the right date. Late payments hurt employees and create compliance risk.
+3. **Single-chain limitation** — Employees across different chains can't receive payments natively. Cross-chain transfers require manual bridging and multiple transactions.
+
+## The Solution
+
+ArcFlow turns idle payroll funds into yield-generating assets and automates the entire payment lifecycle:
+
+- **Earn while you wait** — Deposited USDC enters a Uniswap V4 LP position (USDC/USDT), earning 3-48% APY from swap fees until payday
+- **Fully autonomous execution** — An AI agent monitors payroll dates and executes automatically: remove liquidity, return yield to employer, bridge principal to Arc Chain, distribute to employees
+- **Cross-chain native** — Funds bridge seamlessly via Circle Gateway from Base/Ethereum to Arc Chain. Employees receive USDC directly on Arc
+- **ENS support** — Add recipients by ENS name (e.g. `vitalik.eth`) instead of raw addresses
+- **Smart rebalancing** — Agent monitors APY across chains and migrates positions to the highest-yield chain automatically
+- **AI-powered interface** — Natural language chat to set up payrolls, upload CSVs, track status. No complex DeFi knowledge needed
 
 ## How It Works
 
@@ -561,6 +582,16 @@ Executed payrolls are **not deleted** from storage. Instead:
 - Agent signature verified via ECDSA recover + authorized agent check
 - Replay protection via `processedPayrolls[stateHash]` mapping
 - Pro-rata distribution handles bridge fee deductions fairly
+
+## AI Disclosure
+
+This project was built for HackMoney 2026. AI tools (Claude, ChatGPT) were used for:
+- Research on Uniswap V4 hooks, Circle Gateway integration, and EIP-712 typed data
+- Code comments and documentation
+- Parts of boilerplate code and helper functions
+- Debugging and troubleshooting contract size limits, ABI mismatches, and cross-chain flows
+
+All core architecture, contract logic, agent design, and integration decisions were made by the team.
 
 ## License
 
