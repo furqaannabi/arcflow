@@ -34,7 +34,7 @@ const ERC20_ABI = abis.erc20;
 // Circle Gateway constants
 const GATEWAY_MINTER_ADDRESS = "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B" as Address;
 const GATEWAY_API_URL = "https://gateway-api-testnet.circle.com/v1/transfer";
-const MAX_FEE = 2_010000n; // 2.01 USDC max fee
+const MAX_FEE = 20_000n; // 0.02 USDC max fee
 
 // EIP-712 types for Gateway burn intent
 const EIP712_DOMAIN = { name: "GatewayWallet", version: "1" } as const;
@@ -315,17 +315,26 @@ export class PayrollCron {
     const destUsdc = addressesJson.arcTestnet.usdc as Address;
     const distributorAddr = addressesJson.arcTestnet.distributor as Address;
 
-    const gatewayBalance = await client.readContract({
-      address: GATEWAY_WALLET as Address,
-      abi: GATEWAY_WALLET_ABI,
-      functionName: "availableBalance",
-      args: [sourceUsdc, account.address],
-    }) as bigint;
-    console.log(`[DIST] Gateway available balance: ${gatewayBalance}`);
+    // Query Gateway API for real available balance
+    const balanceRes = await fetch("https://gateway-api-testnet.circle.com/v1/balances", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        token: "USDC",
+        sources: [{ depositor: account.address, domain: sourceDomain }],
+      }),
+    });
+    const balanceData = await balanceRes.json() as any;
+    const balanceStr = balanceData?.balances?.[0]?.balance ?? "0";
+    const gatewayBalance = BigInt(Math.floor(parseFloat(balanceStr) * 1_000_000));
+    console.log(`[DIST] Gateway API balance: ${balanceStr} USDC (${gatewayBalance} raw)`);
 
-    if (gatewayBalance === 0n) {
-      throw new Error("No Gateway balance available yet");
+    if (gatewayBalance <= MAX_FEE) {
+      throw new Error(`Gateway balance ${gatewayBalance} too low to cover fee ${MAX_FEE}`);
     }
+
+    const transferValue = gatewayBalance - MAX_FEE;
+    console.log(`[DIST] Transfer value: ${transferValue} (balance ${gatewayBalance} - fee ${MAX_FEE})`);
 
     // 4. Sign EIP-712 burn intent: source chain → Arc
     const burnIntent = {
@@ -343,7 +352,7 @@ export class PayrollCron {
         destinationRecipient: distributorAddr,
         sourceSigner: account.address,
         destinationCaller: zeroAddress,
-        value: gatewayBalance,
+        value: transferValue,
         salt: ("0x" + randomBytes(32).toString("hex")) as Hex,
         hookData: "0x" as Hex,
       },

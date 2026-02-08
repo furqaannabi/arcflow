@@ -56,7 +56,17 @@
             { "name": "sourceChainId", "type": "uint256" },
             { "name": "currentChainId", "type": "uint256" },
             { "name": "migrationCount", "type": "uint256" },
-            { "name": "recipientsHash", "type": "bytes32" }
+            {
+              "name": "recipients",
+              "type": "tuple[]",
+              "components": [
+                { "name": "wallet", "type": "address" },
+                { "name": "amount", "type": "uint256" }
+              ]
+            },
+            { "name": "recipientsHash", "type": "bytes32" },
+            { "name": "executed", "type": "bool" },
+            { "name": "distributed", "type": "bool" }
           ]
         }
       ]
