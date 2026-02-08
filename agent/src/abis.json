@@ -70,7 +70,8 @@
             { "name": "sourceChainId", "type": "uint256" },
             { "name": "currentChainId", "type": "uint256" },
             { "name": "migrationCount", "type": "uint256" },
-            { "name": "recipientsHash", "type": "bytes32" }
+            { "name": "recipientsHash", "type": "bytes32" },
+            { "name": "executed", "type": "bool" }
           ]
         }
       ]
@@ -207,6 +208,18 @@
         }
       ],
       "outputs": [{ "name": "batchId", "type": "uint256" }]
+    }
+  ],
+  "gatewayWallet": [
+    {
+      "name": "availableBalance",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [
+        { "name": "token", "type": "address" },
+        { "name": "depositor", "type": "address" }
+      ],
+      "outputs": [{ "name": "", "type": "uint256" }]
     }
   ],
   "erc20": [

@@ -57,7 +57,8 @@ contract DeployDistributorScript is Script {
             '  "arcTestnet": {\n',
             '    "distributor": "', vm.toString(distributor), '",\n',
             '    "gatewayMinter": "', vm.toString(config.gatewayMinter), '",\n',
-            '    "circleDomain": ', vm.toString(uint256(config.circleDomain)), '\n',
+            '    "circleDomain": ', vm.toString(uint256(config.circleDomain)), ',\n',
+            '    "usdc": "0x3600000000000000000000000000000000000000"\n',
             '  }\n',
             '}'
         );

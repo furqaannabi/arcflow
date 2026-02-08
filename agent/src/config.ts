@@ -41,6 +41,16 @@ export const CHAIN_IDS = {
   ARC_TESTNET: 5042002,
 } as const;
 
+// Circle Gateway domain IDs per chain
+export const GATEWAY_DOMAINS: Record<number, number> = {
+  84532: 6,      // Base Sepolia
+  11155111: 0,   // Sepolia
+  5042002: 9,    // Arc Testnet
+};
+
+// Circle Gateway Wallet contract address (same on all EVM testnets)
+export const GATEWAY_WALLET = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9" as const;
+
 // Get primary RPC URL (Base Sepolia by default)
 export function getPrimaryRpcUrl(apiKey?: string): string {
   return getRpcUrl(CHAIN_IDS.BASE_SEPOLIA, apiKey);

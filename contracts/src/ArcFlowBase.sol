@@ -269,7 +269,7 @@ abstract contract ArcFlowBase is IUnlockCallback {
         uint256 count = 0;
         for (uint256 i = 0; i < activePayrollIds.length; i++) {
             LPPosition memory pos = positions[activePayrollIds[i]];
-            if (pos.liquidity > 0 && block.timestamp >= pos.payrollDate && pos.currentChainId == chainId) {
+            if (pos.liquidity > 0 && block.timestamp >= pos.payrollDate && pos.currentChainId == chainId && !pos.executed) {
                 count++;
             }
         }
@@ -279,7 +279,7 @@ abstract contract ArcFlowBase is IUnlockCallback {
         for (uint256 i = 0; i < activePayrollIds.length; i++) {
             uint256 pid = activePayrollIds[i];
             LPPosition memory pos = positions[pid];
-            if (pos.liquidity > 0 && block.timestamp >= pos.payrollDate && pos.currentChainId == chainId) {
+            if (pos.liquidity > 0 && block.timestamp >= pos.payrollDate && pos.currentChainId == chainId && !pos.executed) {
                 ready[idx++] = pid;
             }
         }
@@ -292,6 +292,7 @@ abstract contract ArcFlowBase is IUnlockCallback {
         return
             pos.liquidity > 0 &&
             block.timestamp >= pos.payrollDate &&
-            pos.currentChainId == chainId;
+            pos.currentChainId == chainId &&
+            !pos.executed;
     }    
 }

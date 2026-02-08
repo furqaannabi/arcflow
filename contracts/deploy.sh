@@ -108,9 +108,11 @@ main() {
     case $chain in
         "baseSepolia"|"sepolia")
             deploy_source $chain $verify
+            merge_deployments
             ;;
         "arc")
             deploy_arc $verify
+            merge_deployments
             ;;
         "all")
             echo -e "${YELLOW}Deploying to all chains...${NC}"

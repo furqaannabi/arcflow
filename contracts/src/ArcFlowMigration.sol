@@ -112,7 +112,7 @@ contract ArcFlowMigration {
 
         // 4. Bridge via Circle Gateway
         usdc.approve(address(gatewayWallet), amount);
-        gatewayWallet.deposit(address(usdc), amount);
+        gatewayWallet.depositFor(address(usdc), msg.sender, amount);
 
         emit MigrationOut(payrollId, targetChainId, amount);
     }

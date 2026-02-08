@@ -20,6 +20,7 @@ struct LPPosition {
     uint256 migrationCount;
     PayrollRecipient[] recipients;
     bytes32 recipientsHash;
+    bool executed;
 }
 
 struct CallbackData {

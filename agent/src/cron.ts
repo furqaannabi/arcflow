@@ -1,20 +1,71 @@
+import { randomBytes } from "node:crypto";
 import {
   createPublicClient,
   createWalletClient,
   http,
+  maxUint256,
+  zeroAddress,
+  pad,
+  encodePacked,
+  keccak256,
+  encodeAbiParameters,
   type Address,
   type Chain,
+  type Hex,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { baseSepolia, sepolia } from "viem/chains";
+import { arcTestnet, baseSepolia, sepolia } from "viem/chains";
 import { DefiLlamaService } from "./defillama";
-import { getRpcUrl, CHAIN_IDS } from "./config";
+import { getRpcUrl, CHAIN_IDS, GATEWAY_DOMAINS, GATEWAY_WALLET } from "./config";
 import addressesJson from "./addresses.json" with { type: "json" };
 import abis from "./abis.json" with { type: "json" };
+import { ContractService } from "./contracts";
+import { Payroll } from "./models/Payroll";
+
+const contractService = new ContractService();
 
 const ROUTER_ABI = abis.router;
 const STATE_MANAGER_ABI = abis.stateManager;
 const MIGRATION_ABI = abis.migration;
+const DISTRIBUTOR_ABI = abis.distributor;
+const GATEWAY_WALLET_ABI = abis.gatewayWallet;
+const ERC20_ABI = abis.erc20;
+
+// Circle Gateway constants
+const GATEWAY_MINTER_ADDRESS = "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B" as Address;
+const GATEWAY_API_URL = "https://gateway-api-testnet.circle.com/v1/transfer";
+const MAX_FEE = 2_010000n; // 2.01 USDC max fee
+
+// EIP-712 types for Gateway burn intent
+const EIP712_DOMAIN = { name: "GatewayWallet", version: "1" } as const;
+
+const EIP712Domain = [
+  { name: "name", type: "string" },
+  { name: "version", type: "string" },
+] as const;
+
+const TransferSpec = [
+  { name: "version", type: "uint32" },
+  { name: "sourceDomain", type: "uint32" },
+  { name: "destinationDomain", type: "uint32" },
+  { name: "sourceContract", type: "bytes32" },
+  { name: "destinationContract", type: "bytes32" },
+  { name: "sourceToken", type: "bytes32" },
+  { name: "destinationToken", type: "bytes32" },
+  { name: "sourceDepositor", type: "bytes32" },
+  { name: "destinationRecipient", type: "bytes32" },
+  { name: "sourceSigner", type: "bytes32" },
+  { name: "destinationCaller", type: "bytes32" },
+  { name: "value", type: "uint256" },
+  { name: "salt", type: "bytes32" },
+  { name: "hookData", type: "bytes" },
+] as const;
+
+const BurnIntent = [
+  { name: "maxBlockHeight", type: "uint256" },
+  { name: "maxFee", type: "uint256" },
+  { name: "spec", type: "TransferSpec" },
+] as const;
 
 // Multi-chain configuration
 interface ChainConfig {
@@ -24,6 +75,8 @@ interface ChainConfig {
   router: Address;
   stateManager: Address;
   migration: Address;
+  distributor: Address;
+  usdc: Address;
   defiLlamaName: string;
 }
 
@@ -35,6 +88,8 @@ const CHAIN_CONFIGS: ChainConfig[] = [
     router: addressesJson.baseSepolia.router as Address,
     stateManager: addressesJson.baseSepolia.stateManager as Address,
     migration: addressesJson.baseSepolia.migration as Address,
+    distributor: addressesJson.arcTestnet.distributor as Address,
+    usdc: addressesJson.baseSepolia.usdc as Address,
     defiLlamaName: "Base",
   },
   {
@@ -44,7 +99,20 @@ const CHAIN_CONFIGS: ChainConfig[] = [
     router: addressesJson.sepolia.router as Address,
     stateManager: addressesJson.sepolia.stateManager as Address,
     migration: addressesJson.sepolia.migration as Address,
+    distributor: addressesJson.arcTestnet.distributor as Address,
+    usdc: addressesJson.sepolia.usdc as Address,
     defiLlamaName: "Ethereum",
+  },
+  {
+    id: CHAIN_IDS.ARC_TESTNET,
+    name: "Arc Testnet",
+    chain: arcTestnet,
+    router: addressesJson.arcTestnet.distributor as Address,
+    stateManager: addressesJson.arcTestnet.distributor as Address,
+    migration: addressesJson.arcTestnet.distributor as Address,
+    distributor: addressesJson.arcTestnet.distributor as Address,
+    usdc: addressesJson.arcTestnet.usdc as Address,
+    defiLlamaName: "Arc",
   },
 ];
 
@@ -112,7 +180,13 @@ export class PayrollCron {
   /**
    * Get public client for a specific chain
    */
-  private getClient(chainConfig: ChainConfig) {
+  private getClient(chainConfig: ChainConfig, isArc: boolean = false) {
+    if (isArc) {
+      return createPublicClient({
+        chain: arcTestnet,
+        transport: http(getRpcUrl(CHAIN_IDS.ARC_TESTNET)),
+      });
+    }
     return createPublicClient({
       chain: chainConfig.chain,
       transport: http(getRpcUrl(chainConfig.id)),
@@ -172,19 +246,202 @@ export class PayrollCron {
   }
 
   /**
-   * Execute a ready payroll directly via the router contract
+   * Get wallet client for Arc Testnet
+   */
+  private getArcWalletClient() {
+    if (!this.privateKey) {
+      throw new Error("Private key not configured");
+    }
+    const account = privateKeyToAccount(this.privateKey as `0x${string}`);
+    return createWalletClient({
+      account,
+      chain: arcTestnet,
+      transport: http(getRpcUrl(CHAIN_IDS.ARC_TESTNET)),
+    });
+  }
+
+  /**
+   * Execute a ready payroll and distribute to recipients via Circle Gateway
+   * Flow: execute() → Gateway depositFor(agent) → sign burn intent → Gateway API → mint on Arc → distribute
    */
   async executePayroll(chainConfig: ChainConfig, payrollId: bigint): Promise<string> {
     const walletClient = this.getWalletClient(chainConfig);
+    const client = this.getClient(chainConfig);
+    const account = privateKeyToAccount(this.privateKey as `0x${string}`);
 
-    const hash = await walletClient.writeContract({
+    // 1. Read position data BEFORE execution (getPos includes recipients info)
+    const pos = await contractService.getPos(payrollId);
+    console.log(`[DIST] Position #${payrollId}: provider=${pos.provider}, amount=${pos.usdcDeposited}, date=${pos.payrollDate}`);
+
+    // 2. Look up recipients from MongoDB
+    const payrollDoc = await Payroll.findOne({
+      payrollId: Number(payrollId),
+      status: "deposited",
+    });
+
+    if (!payrollDoc) {
+      console.warn(`[DIST] No MongoDB payroll found for #${payrollId}, falling back to on-chain recipients`);
+    }
+
+    // 3. Execute payroll on-chain (Router removes LP, deposits to Gateway for agent)
+    const executeTxHash = await walletClient.writeContract({
       address: chainConfig.router,
       abi: ROUTER_ABI,
       functionName: "execute",
       args: [payrollId],
     });
+    console.log(`[DIST] Execute TX: ${executeTxHash}`);
 
-    return hash;
+    // Wait for execution to confirm
+    await client.waitForTransactionReceipt({ hash: executeTxHash });
+    console.log(`[DIST] Execute confirmed`);
+
+    // 4. Create and sign EIP-712 burn intent to transfer from source chain → Arc
+    const sourceDomain = GATEWAY_DOMAINS[chainConfig.id];
+    const destDomain = GATEWAY_DOMAINS[CHAIN_IDS.ARC_TESTNET];
+    const sourceUsdc = chainConfig.usdc;
+    const destUsdc = addressesJson.arcTestnet.usdc as Address;
+    const distributorAddr = addressesJson.arcTestnet.distributor as Address;
+
+    // Check Gateway balance for agent
+    const gatewayBalance = await client.readContract({
+      address: GATEWAY_WALLET as Address,
+      abi: GATEWAY_WALLET_ABI,
+      functionName: "availableBalance",
+      args: [sourceUsdc, account.address],
+    }) as bigint;
+    console.log(`[DIST] Gateway available balance: ${gatewayBalance}`);
+
+    const transferValue = gatewayBalance; // Transfer all available balance
+
+    const burnIntent = {
+      maxBlockHeight: maxUint256,
+      maxFee: MAX_FEE,
+      spec: {
+        version: 1,
+        sourceDomain,
+        destinationDomain: destDomain,
+        sourceContract: GATEWAY_WALLET as Address,
+        destinationContract: GATEWAY_MINTER_ADDRESS,
+        sourceToken: sourceUsdc,
+        destinationToken: destUsdc,
+        sourceDepositor: account.address,
+        destinationRecipient: distributorAddr, // Mint directly to distributor
+        sourceSigner: account.address,
+        destinationCaller: zeroAddress,
+        value: transferValue,
+        salt: ("0x" + randomBytes(32).toString("hex")) as Hex,
+        hookData: "0x" as Hex,
+      },
+    };
+
+    const typedData = {
+      types: { EIP712Domain, TransferSpec, BurnIntent },
+      domain: EIP712_DOMAIN,
+      primaryType: "BurnIntent" as const,
+      message: {
+        ...burnIntent,
+        spec: {
+          ...burnIntent.spec,
+          sourceContract: pad(burnIntent.spec.sourceContract.toLowerCase() as `0x${string}`, { size: 32 }),
+          destinationContract: pad(burnIntent.spec.destinationContract.toLowerCase() as `0x${string}`, { size: 32 }),
+          sourceToken: pad(burnIntent.spec.sourceToken.toLowerCase() as `0x${string}`, { size: 32 }),
+          destinationToken: pad(burnIntent.spec.destinationToken.toLowerCase() as `0x${string}`, { size: 32 }),
+          sourceDepositor: pad(burnIntent.spec.sourceDepositor.toLowerCase() as `0x${string}`, { size: 32 }),
+          destinationRecipient: pad(burnIntent.spec.destinationRecipient.toLowerCase() as `0x${string}`, { size: 32 }),
+          sourceSigner: pad(burnIntent.spec.sourceSigner.toLowerCase() as `0x${string}`, { size: 32 }),
+          destinationCaller: pad(burnIntent.spec.destinationCaller.toLowerCase() as `0x${string}`, { size: 32 }),
+        },
+      },
+    };
+
+    const burnSignature = await account.signTypedData(typedData as any);
+    console.log(`[DIST] Burn intent signed`);
+
+    // 5. Submit burn intent to Gateway API
+    console.log(`[DIST] Submitting to Gateway API...`);
+    const requests = [{ burnIntent: typedData.message, signature: burnSignature }];
+
+    const response = await fetch(GATEWAY_API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requests, (_key, value) =>
+        typeof value === "bigint" ? value.toString() : value,
+      ),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error(`[DIST] Gateway API error: ${response.status} ${errText}`);
+      throw new Error(`Gateway API failed: ${response.status}`);
+    }
+
+    const gatewayResponse = await response.json();
+    console.log(`[DIST] Gateway API response received`);
+    const { attestation, signature: gatewaySig } = gatewayResponse;
+
+    // 6. Sign payroll state hash (ETH_CHAIN_ID = 1 to match distributor)
+    const recipients = payrollDoc
+      ? payrollDoc.recipients.map(r => ({
+          wallet: r.wallet as Address,
+          amount: BigInt(r.amount),
+        }))
+      : pos.recipients.map((r: any) => ({
+          wallet: r.wallet as Address,
+          amount: r.amount as bigint,
+        }));
+
+    const recipientsHash = keccak256(
+      encodeAbiParameters(
+        [{ type: "tuple[]", components: [{ name: "wallet", type: "address" }, { name: "amount", type: "uint256" }] }],
+        [recipients],
+      ),
+    );
+
+    const stateHash = keccak256(
+      encodePacked(
+        ["uint256", "address", "uint256", "uint256", "uint256", "bytes32"],
+        [payrollId, pos.provider as Address, pos.usdcDeposited, pos.payrollDate, 1n, recipientsHash],
+      ),
+    );
+
+    // Sign as eth signed message (matches toEthSignedMessageHash in distributor)
+    const stateSignature = await account.signMessage({ message: { raw: stateHash as Hex } });
+    console.log(`[DIST] State signature created`);
+
+    // 7. Call distributor.mintVerifyAndDistribute on Arc Chain
+    console.log(`[DIST] Calling distributor on Arc Chain...`);
+    const arcWalletClient = this.getArcWalletClient();
+    const arcClient = this.getClient(chainConfig, true);
+
+    const distTxHash = await arcWalletClient.writeContract({
+      address: distributorAddr,
+      abi: DISTRIBUTOR_ABI,
+      functionName: "mintVerifyAndDistribute",
+      args: [
+        attestation as Hex,
+        gatewaySig as Hex,
+        payrollId,
+        pos.provider as Address,
+        pos.usdcDeposited,
+        pos.payrollDate,
+        stateSignature,
+        recipients,
+      ],
+    });
+    console.log(`[DIST] Distribution TX: ${distTxHash}`);
+
+    await arcClient.waitForTransactionReceipt({ hash: distTxHash });
+    console.log(`[DIST] Distribution confirmed on Arc Chain!`);
+
+    // 8. Update MongoDB status to settled
+    if (payrollDoc) {
+      payrollDoc.status = "settled";
+      await payrollDoc.save();
+      console.log(`[DIST] Payroll #${payrollId} status updated to settled`);
+    }
+
+    return executeTxHash;
   }
 
   /**
@@ -370,7 +627,7 @@ export class PayrollCron {
   }
 
   /**
-   * Execute migration directly via the migration contract
+   * Execute full migration: migrateOut → Gateway burn intent → Gateway API → migrateIn on target
    */
   async executeMigration(
     chainConfig: ChainConfig,
@@ -378,16 +635,122 @@ export class PayrollCron {
     targetChainId: bigint
   ): Promise<string> {
     const walletClient = this.getWalletClient(chainConfig);
+    const client = this.getClient(chainConfig);
+    const account = privateKeyToAccount(this.privateKey as `0x${string}`);
 
-    const hash = await walletClient.writeContract({
+    // 1. Call migrateOut (removes LP, deposits to Gateway for agent)
+    const migrateOutHash = await walletClient.writeContract({
       address: chainConfig.migration,
       abi: MIGRATION_ABI,
       functionName: "migrateOut",
       args: [payrollId, targetChainId],
     });
+    console.log(`[REBALANCE] migrateOut TX: ${migrateOutHash}`);
+    await client.waitForTransactionReceipt({ hash: migrateOutHash });
+    console.log(`[REBALANCE] migrateOut confirmed`);
 
-    console.log(`[REBALANCE] Migration TX: ${hash}`);
-    return hash;
+    // 2. Check Gateway balance for agent
+    const gatewayBalance = await client.readContract({
+      address: GATEWAY_WALLET as Address,
+      abi: GATEWAY_WALLET_ABI,
+      functionName: "availableBalance",
+      args: [chainConfig.usdc, account.address],
+    }) as bigint;
+    console.log(`[REBALANCE] Gateway available balance: ${gatewayBalance}`);
+
+    // 3. Find target chain config
+    const targetConfig = CHAIN_CONFIGS.find(c => c.id === Number(targetChainId));
+    if (!targetConfig) throw new Error(`Unknown target chain ${targetChainId}`);
+
+    const sourceDomain = GATEWAY_DOMAINS[chainConfig.id];
+    const destDomain = GATEWAY_DOMAINS[targetConfig.id];
+
+    // 4. Sign EIP-712 burn intent: source chain → target chain
+    const burnIntent = {
+      maxBlockHeight: maxUint256,
+      maxFee: MAX_FEE,
+      spec: {
+        version: 1,
+        sourceDomain,
+        destinationDomain: destDomain,
+        sourceContract: GATEWAY_WALLET as Address,
+        destinationContract: GATEWAY_MINTER_ADDRESS,
+        sourceToken: chainConfig.usdc,
+        destinationToken: targetConfig.usdc,
+        sourceDepositor: account.address,
+        destinationRecipient: targetConfig.migration, // Mint to migration contract on target
+        sourceSigner: account.address,
+        destinationCaller: zeroAddress,
+        value: gatewayBalance,
+        salt: ("0x" + randomBytes(32).toString("hex")) as Hex,
+        hookData: "0x" as Hex,
+      },
+    };
+
+    const typedData = {
+      types: { EIP712Domain, TransferSpec, BurnIntent },
+      domain: EIP712_DOMAIN,
+      primaryType: "BurnIntent" as const,
+      message: {
+        ...burnIntent,
+        spec: {
+          ...burnIntent.spec,
+          sourceContract: pad(burnIntent.spec.sourceContract.toLowerCase() as `0x${string}`, { size: 32 }),
+          destinationContract: pad(burnIntent.spec.destinationContract.toLowerCase() as `0x${string}`, { size: 32 }),
+          sourceToken: pad(burnIntent.spec.sourceToken.toLowerCase() as `0x${string}`, { size: 32 }),
+          destinationToken: pad(burnIntent.spec.destinationToken.toLowerCase() as `0x${string}`, { size: 32 }),
+          sourceDepositor: pad(burnIntent.spec.sourceDepositor.toLowerCase() as `0x${string}`, { size: 32 }),
+          destinationRecipient: pad(burnIntent.spec.destinationRecipient.toLowerCase() as `0x${string}`, { size: 32 }),
+          sourceSigner: pad(burnIntent.spec.sourceSigner.toLowerCase() as `0x${string}`, { size: 32 }),
+          destinationCaller: pad(burnIntent.spec.destinationCaller.toLowerCase() as `0x${string}`, { size: 32 }),
+        },
+      },
+    };
+
+    const burnSignature = await account.signTypedData(typedData as any);
+    console.log(`[REBALANCE] Burn intent signed`);
+
+    // 5. Submit to Gateway API
+    const requests = [{ burnIntent: typedData.message, signature: burnSignature }];
+    const response = await fetch(GATEWAY_API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requests, (_key, value) =>
+        typeof value === "bigint" ? value.toString() : value,
+      ),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Gateway API failed: ${response.status} ${errText}`);
+    }
+
+    const gatewayResponse = await response.json();
+    const { attestation, signature: gatewaySig } = gatewayResponse;
+    console.log(`[REBALANCE] Gateway API response received`);
+
+    // 6. Call migrateIn on target chain
+    const targetWalletClient = this.getWalletClient(targetConfig);
+    const targetClient = this.getClient(targetConfig);
+
+    const migrateInHash = await targetWalletClient.writeContract({
+      address: targetConfig.migration,
+      abi: MIGRATION_ABI,
+      functionName: "migrateIn",
+      args: [
+        payrollId,
+        BigInt(chainConfig.id),
+        gatewayBalance,
+        attestation as Hex,
+        gatewaySig as Hex,
+      ],
+    });
+    console.log(`[REBALANCE] migrateIn TX: ${migrateInHash}`);
+
+    await targetClient.waitForTransactionReceipt({ hash: migrateInHash });
+    console.log(`[REBALANCE] migrateIn confirmed on ${targetConfig.name}`);
+
+    return migrateOutHash;
   }
 
   /**

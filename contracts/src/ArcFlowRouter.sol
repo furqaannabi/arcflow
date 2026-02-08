@@ -120,7 +120,8 @@ contract ArcFlowRouter is ArcFlowBase {
             sourceChainId: block.chainid,
             currentChainId: block.chainid,
             migrationCount: 0,
-            recipientsHash: rHash
+            recipientsHash: rHash,
+            executed: false
         });
 
         totalLiquidity += liq;
@@ -133,12 +134,13 @@ contract ArcFlowRouter is ArcFlowBase {
     }
 
     function _withdraw(uint256 pid) internal returns (uint256 amt) {
-        LPPosition memory p = positions[pid];
+        LPPosition storage p = positions[pid];
         if (p.liquidity == 0) revert NoPosition();
         if (block.timestamp < p.payrollDate) revert NotReady();
         if (p.currentChainId != chainId) revert WrongChain();
 
-        (uint256 u0, uint256 u1) = _removeLiquidity(p.liquidity);
+        uint128 liq = p.liquidity;
+        (uint256 u0, uint256 u1) = _removeLiquidity(liq);
         if (u1 > 0) u0 += _swap(false, u1);
 
         uint256 y = 0;
@@ -151,11 +153,11 @@ contract ArcFlowRouter is ArcFlowBase {
             amt = u0;
         }
 
-        totalLiquidity -= p.liquidity;
-        delete positions[pid];
+        totalLiquidity -= liq;
+        p.liquidity = 0;
+        p.executed = true;
 
         _removePayroll(pid);
-        _removeFromProviderPayrolls(p.provider, pid);
 
         emit Withdrawn(pid, p.provider, amt, y);
     }
@@ -211,7 +213,7 @@ contract ArcFlowRouter is ArcFlowBase {
     ) external onlyAgent returns (uint256 amt) {
         amt = _withdraw(pid);
         usdc.approve(address(gatewayWallet), amt);
-        gatewayWallet.deposit(address(usdc), amt);
+        gatewayWallet.depositFor(address(usdc), msg.sender, amt);
         emit Executed(pid, amt);
     }
 
