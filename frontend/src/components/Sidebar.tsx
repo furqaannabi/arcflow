@@ -69,7 +69,7 @@ export default function Sidebar({ onNewChat, onSessionChange, activeSessionId: e
       const titleFromMessage = firstUserMsg?.content?.slice(0, 30) || "Chat";
       const finalTitle = titleFromMessage + (titleFromMessage.length >= 30 ? "..." : "");
       
-      // Check if session already exists
+      // Check if session already exists in current state
       const existingSession = sessions.find(s => s.id === externalActiveSessionId);
       
       if (existingSession) {
@@ -82,14 +82,18 @@ export default function Sidebar({ onNewChat, onSessionChange, activeSessionId: e
         return;
       }
       
-      // Check localStorage to avoid race condition
+      // Check localStorage to determine if we should create this session
       const storedSessions = localStorage.getItem('arcflow_sessions');
       if (storedSessions) {
         const parsed = JSON.parse(storedSessions);
-        if (parsed.some((s: any) => s.id === externalActiveSessionId)) return;
+        // If localStorage has sessions but THIS session isn't in it, it was deleted - don't recreate
+        if (!parsed.some((s: any) => s.id === externalActiveSessionId)) {
+          return;
+        }
       }
+      // If storedSessions is null/empty, this is a first-time user - allow creation
       
-      // Create new session
+      // Create new session only if it exists in localStorage but not in state
       const newSession: ChatSession = {
         id: externalActiveSessionId,
         title: finalTitle,

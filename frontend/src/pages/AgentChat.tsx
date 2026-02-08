@@ -150,6 +150,9 @@ export default function AgentChat() {
   }, []);
 
   const handleSendMessage = async (overrideContent?: string) => {
+    // Prevent chatting without wallet connection
+    if (!userAddress) return;
+    
     const messageContent = typeof overrideContent === "string" ? overrideContent : input;
 
     if ((!messageContent.trim() && selectedFiles.length === 0) || isLoading) return;
@@ -468,15 +471,15 @@ export default function AgentChat() {
                   value={input}
                   onChange={handleInput}
                   onKeyDown={handleKeyDown}
-                  placeholder={selectedFiles.length > 0 ? "Add a message..." : "Ask anything..."}
-                  className="w-full px-3 md:px-6 py-3 md:py-4 text-sm md:text-base border border-gray-200 dark:border-input rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm bg-transparent dark:text-foreground placeholder:text-muted-foreground resize-none min-h-[44px] md:min-h-[52px] max-h-[200px] overflow-y-auto"
-                  disabled={isLoading}
+                  placeholder={!userAddress ? "Connect wallet to start chatting..." : selectedFiles.length > 0 ? "Add a message..." : "Ask anything..."}
+                  className="w-full px-3 md:px-6 py-3 md:py-4 text-sm md:text-base border border-gray-200 dark:border-input rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm bg-transparent dark:text-foreground placeholder:text-muted-foreground resize-none min-h-[44px] md:min-h-[52px] max-h-[200px] overflow-y-auto disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isLoading || !userAddress}
                 />
               </div>
               
               <Button 
                 onClick={() => handleSendMessage()}
-                disabled={isLoading || (!input.trim() && selectedFiles.length === 0)} 
+                disabled={isLoading || !userAddress || (!input.trim() && selectedFiles.length === 0)} 
                 className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700 text-white h-[44px] md:h-[52px] w-11 md:w-14 rounded-xl flex-shrink-0"
               >
                 <Send className="w-5 h-5" />
