@@ -419,7 +419,10 @@ export default function AgentChat() {
         </header>
 
         {/* Chat Area */}
-        <main className="flex-1 overflow-y-auto p-4 md:p-8 flex flex-col">
+        <main 
+          className="flex-1 overflow-y-auto p-4 md:p-8 flex flex-col" 
+          onClick={() => payrollsPanelOpen && setPayrollsPanelOpen(false)}
+        >
           {messages.length === 0 ? (
             <WelcomeScreen onSuggestionClick={handleSendMessage} />
           ) : (
