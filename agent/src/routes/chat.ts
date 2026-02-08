@@ -1202,7 +1202,7 @@ router.post("/chat", upload.single("file"), async (req: Request, res: Response) 
       contentLower.includes("attach") ||
       contentLower.includes("data");
     
-    console.log(`[FILE-UPLOAD] Detected allowFileUpload: ${allowFileUpload} for message: "${fullContent.slice(0, 100)}..."`);
+     //console.log(`[FILE-UPLOAD] Detected allowFileUpload: ${allowFileUpload} for message: "${fullContent.slice(0, 100)}..."`);
 
     // Replace the last message (from non-streaming break) with streamed content
     const lastMsg = session.messages[session.messages.length - 1];

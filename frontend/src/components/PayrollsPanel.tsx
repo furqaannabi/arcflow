@@ -219,25 +219,25 @@ export default function PayrollsPanel({ isOpen, onClose, userAddress }: Payrolls
                       Created {new Date(payroll.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} at {new Date(payroll.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </div>
                     
-                    {/* Expected Execution Countdown */}
+                    {/* Arc Credit Countdown */}
                     {(payroll.status === 'pending' || payroll.status === 'deposited') && !payroll.executed && (() => {
                       const createdTime = new Date(payroll.createdAt).getTime();
-                      const expectedExecution = createdTime + (15 * 60 * 1000); // +15 minutes
+                      const arcCreditTime = createdTime + (20 * 60 * 1000); // +20 minutes for Arc crediting
                       const now = Date.now();
-                      const timeLeft = expectedExecution - now;
+                      const timeLeft = arcCreditTime - now;
                       
                       if (timeLeft > 0) {
                         const minutes = Math.floor(timeLeft / 60000);
                         const seconds = Math.floor((timeLeft % 60000) / 1000);
                         return (
-                          <div className="text-xs font-medium text-orange-600 dark:text-orange-400">
-                            Expected execution in {minutes}m {seconds}s
+                          <div className="text-xs font-medium text-blue-600 dark:text-blue-400">
+                            Estimated credit on Arc in {minutes}m {seconds}s
                           </div>
                         );
                       } else {
                         return (
                           <div className="text-xs font-medium text-green-600 dark:text-green-400">
-                            Ready for execution
+                            Estimated credit on Arc
                           </div>
                         );
                       }
