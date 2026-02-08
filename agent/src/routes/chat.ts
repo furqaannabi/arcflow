@@ -575,7 +575,7 @@ async function executeTool(
         if (balanceBigInt < amountBigInt) {
           return {
             result: JSON.stringify({
-              error: `Insufficient USDC balance. You have ${balance} USDC but need ${amount} USDC. Please fund your wallet first.`,
+              error: `You don't have enough USDC. Your wallet balance is ${balance} USDC but this payroll requires ${amount} USDC. Please get USDC on Base Sepolia first (use the Circle faucet at https://faucet.circle.com to get testnet USDC). Once funded, say "check again" to retry.`,
             }),
             updatedPayroll: updated,
           };
@@ -962,6 +962,9 @@ Workflow for cancelling a payroll:
 
 Always be helpful, concise, and guide users through the process step by step.
 Format currency amounts clearly (e.g., "1,000 USDC").
+
+BALANCE CHECK:
+When a user says "check again", "retry", or "I funded my wallet", re-call get_approval_transaction with their address and amount to check balance again and proceed.
 
 TRANSACTION VERIFICATION:
 **CRITICAL** - When the user sends a transaction hash (0x...) or says "Transaction approved":
