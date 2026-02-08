@@ -30,7 +30,8 @@ contract DeployDistributorScript is Script {
         vm.startBroadcast(deployerPrivateKey);
 
         ArcPayrollDistributor distributor = new ArcPayrollDistributor(
-            config.gatewayMinter
+            config.gatewayMinter,
+            0x3600000000000000000000000000000000000000
         );
         console.log("ArcPayrollDistributor deployed at:", address(distributor));
 

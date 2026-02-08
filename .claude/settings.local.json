@@ -21,7 +21,8 @@
       "WebFetch(domain:sepolia.etherscan.io)",
       "WebFetch(domain:docs.uniswap.org)",
       "Bash(findstr:*)",
-      "WebFetch(domain:developers.circle.com)"
+      "WebFetch(domain:developers.circle.com)",
+      "WebFetch(domain:testnet.arcscan.app)"
     ]
   }
 }

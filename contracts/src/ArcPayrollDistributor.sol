@@ -9,6 +9,8 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {
     MessageHashUtils
 } from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {PayrollRecipient} from "./ArcFlowTypes.sol";
 import {IGatewayMinter} from "./interfaces/ICircleGateway.sol";
 
@@ -18,10 +20,12 @@ import {IGatewayMinter} from "./interfaces/ICircleGateway.sol";
 contract ArcPayrollDistributor is ReentrancyGuard, Ownable {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
+    using SafeERC20 for IERC20;
 
     // ============ State ============
 
     IGatewayMinter public immutable gatewayMinter;
+    IERC20 public immutable usdc;
     mapping(address => bool) public authorizedAgents;
     mapping(bytes32 => bool) public processedPayrolls; // prevent replay
     uint256 public currentBatchId;
@@ -64,8 +68,9 @@ contract ArcPayrollDistributor is ReentrancyGuard, Ownable {
         _;
     }
 
-    constructor(address _gatewayMinter) Ownable(msg.sender) {
+    constructor(address _gatewayMinter, address _usdc) Ownable(msg.sender) {
         gatewayMinter = IGatewayMinter(_gatewayMinter);
+        usdc = IERC20(_usdc);
     }
 
     function setAgentAuthorization(
@@ -155,9 +160,9 @@ contract ArcPayrollDistributor is ReentrancyGuard, Ownable {
         processedPayrolls[stateHash] = true;
 
         // Step 3: Mint from Circle Gateway
-        uint256 balanceBefore = address(this).balance;
+        uint256 balanceBefore = usdc.balanceOf(address(this));
         gatewayMinter.gatewayMint(attestation, signature);
-        uint256 minted = address(this).balance - balanceBefore;
+        uint256 minted = usdc.balanceOf(address(this)) - balanceBefore;
 
         // Step 4: Verify amounts match
         uint256 recipientTotal = 0;
@@ -172,10 +177,7 @@ contract ArcPayrollDistributor is ReentrancyGuard, Ownable {
 
         for (uint256 i = 0; i < recipients.length; i++) {
             if (recipients[i].wallet == address(0)) revert ZeroAddress();
-            (bool success, ) = recipients[i].wallet.call{
-                value: recipients[i].amount
-            }("");
-            if (!success) revert TransferFailed();
+            usdc.safeTransfer(recipients[i].wallet, recipients[i].amount);
             emit PaymentSent(
                 batchId,
                 recipients[i].wallet,
@@ -195,7 +197,7 @@ contract ArcPayrollDistributor is ReentrancyGuard, Ownable {
     // ============ View Functions ============
 
     function getBalance() external view returns (uint256) {
-        return address(this).balance;
+        return usdc.balanceOf(address(this));
     }
 
     function isPayrollProcessed(
@@ -207,9 +209,6 @@ contract ArcPayrollDistributor is ReentrancyGuard, Ownable {
     // ============ Emergency ============
 
     function emergencyWithdraw(uint256 amount) external onlyOwner {
-        (bool success, ) = owner().call{value: amount}("");
-        if (!success) revert TransferFailed();
+        usdc.safeTransfer(owner(), amount);
     }
-
-    receive() external payable {}
 }
