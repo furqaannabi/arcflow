@@ -28,6 +28,7 @@ export default function PayrollsPanel({ isOpen, onClose, userAddress }: Payrolls
   const [payrolls, setPayrolls] = useState<Payroll[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [, setCountdownTick] = useState(0); // Force re-render for countdown
 
   // Fetch payrolls function
   const fetchPayrolls = useCallback(async () => {
@@ -61,6 +62,16 @@ export default function PayrollsPanel({ isOpen, onClose, userAddress }: Payrolls
     const interval = setInterval(fetchPayrolls, AUTO_REFRESH_INTERVAL);
     return () => clearInterval(interval);
   }, [isOpen, userAddress, fetchPayrolls]);
+
+  // Update countdown every second
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const interval = setInterval(() => {
+      setCountdownTick(prev => prev + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isOpen]);
 
   return (
     <>
@@ -198,10 +209,39 @@ export default function PayrollsPanel({ isOpen, onClose, userAddress }: Payrolls
                     </div>
 
                     {/* Recipients */}
-                    <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                    <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 mb-1">
                       <Users className="w-4 h-4" />
                       <span>{payroll.recipients.length} recipient{payroll.recipients.length !== 1 ? 's' : ''}</span>
                     </div>
+                    
+                    {/* Created Date */}
+                    <div className="text-xs text-gray-500 dark:text-gray-500 mb-1">
+                      Created {new Date(payroll.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} at {new Date(payroll.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                    
+                    {/* Expected Execution Countdown */}
+                    {(payroll.status === 'pending' || payroll.status === 'deposited') && !payroll.executed && (() => {
+                      const createdTime = new Date(payroll.createdAt).getTime();
+                      const expectedExecution = createdTime + (15 * 60 * 1000); // +15 minutes
+                      const now = Date.now();
+                      const timeLeft = expectedExecution - now;
+                      
+                      if (timeLeft > 0) {
+                        const minutes = Math.floor(timeLeft / 60000);
+                        const seconds = Math.floor((timeLeft % 60000) / 1000);
+                        return (
+                          <div className="text-xs font-medium text-orange-600 dark:text-orange-400">
+                            Expected execution in {minutes}m {seconds}s
+                          </div>
+                        );
+                      } else {
+                        return (
+                          <div className="text-xs font-medium text-green-600 dark:text-green-400">
+                            Ready for execution
+                          </div>
+                        );
+                      }
+                    })()}
                   </div>
                 );
               })}
