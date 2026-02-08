@@ -11,6 +11,8 @@ interface Payroll {
   txHash?: string;
   recipients: Array<{ wallet: string; amount: string }>;
   createdAt: string;
+  executed?: boolean;
+  distributed?: boolean;
 }
 
 interface PayrollsPanelProps {
@@ -128,10 +130,31 @@ export default function PayrollsPanel({ isOpen, onClose, userAddress }: Payrolls
               {payrolls.map((payroll) => {
                 const amount = (Number(payroll.totalAmount) / 1e6).toFixed(2);
                 const date = new Date(Number(payroll.payrollDate) * 1000);
+                
+                // Derive display status from boolean fields
+                let displayStatus = payroll.status;
+                let statusLabel = payroll.status.charAt(0).toUpperCase() + payroll.status.slice(1);
+                
+                if (payroll.status === "deposited") {
+                  if (payroll.distributed) {
+                    displayStatus = "completed";
+                    statusLabel = "Completed";
+                  } else if (payroll.executed) {
+                    displayStatus = "distributing";
+                    statusLabel = "Distributing";
+                  } else {
+                    displayStatus = "earning";
+                    statusLabel = "Earning Yield";
+                  }
+                }
+                
                 const statusColors = {
                   pending: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
                   deposited: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
-                  executed: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+                  earning: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+                  executed: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
+                  distributing: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
+                  completed: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
                   failed: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
                 };
 
@@ -144,9 +167,9 @@ export default function PayrollsPanel({ isOpen, onClose, userAddress }: Payrolls
                     <div className="flex items-center justify-between mb-2">
                       <span className={cn(
                         "text-xs font-medium px-2 py-1 rounded-full",
-                        statusColors[payroll.status as keyof typeof statusColors] || statusColors.pending
+                        statusColors[displayStatus as keyof typeof statusColors] || statusColors.pending
                       )}>
-                        {payroll.status.charAt(0).toUpperCase() + payroll.status.slice(1)}
+                        {statusLabel}
                       </span>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-gray-500 dark:text-gray-400">
