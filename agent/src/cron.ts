@@ -904,8 +904,8 @@ export class PayrollCron {
     // Then run on 6-hour interval
     this.apyIntervalId = setInterval(() => this.apyTick(), APY_INTERVAL);
 
-    // Start distribution cron (every 2 minutes)
-    const DIST_INTERVAL = 2 * 60 * 1000;
+    // Start distribution cron (every 15 minutes)
+    const DIST_INTERVAL = 15 * 60 * 1000;
     console.log(`[DIST-CRON] Starting distribution cron (interval: ${DIST_INTERVAL / 1000}s)`);
     this.distributionTick();
     this.distIntervalId = setInterval(() => this.distributionTick(), DIST_INTERVAL);

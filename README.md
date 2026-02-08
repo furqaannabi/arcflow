@@ -1,19 +1,52 @@
 # ArcFlow
 
-Cross-chain payroll management platform with yield optimization. Deposit USDC, earn yield via Uniswap V4 LP positions, and distribute payments through Circle CCTP Bridge to Arc Chain.
+Cross-chain payroll management platform with yield optimization. Deposit USDC, earn yield via Uniswap V4 LP positions, and distribute payments through Circle Gateway Bridge to Arc Chain.
 
 ## How It Works
 
 ```
-                                    USER FLOW
-
-    [1] DEPOSIT                [2] EARN YIELD              [3] EXECUTE                 [4] DISTRIBUTION
-
-    Employer deposits     -->  USDC earns yield in   -->  Agent executes on     -->  Recipients receive
-    USDC + payroll data        Uniswap V4 LP pool         payroll date                USDC on Arc Chain
-
-    Base/Sepolia               Auto-rebalances to         Remove LP + swap            Circle CCTP Bridge
-                               highest APY chain          back to USDC                + Distributor
+Employer                    Uniswap V4               Circle Gateway              Arc Chain
+   |                           |                           |                        |
+   |  1. deposit(USDC, date,   |                           |                        |
+   |     recipients[])         |                           |                        |
+   |-------------------------->|                           |                        |
+   |   transferFrom(USDC)      |                           |                        |
+   |   swap(USDC -> USDT, 50%) |                           |                        |
+   |   addLiquidity(USDC,USDT) |                           |                        |
+   |   Store LPPosition        |                           |                        |
+   |                           |                           |                        |
+   |        ~~~~ Earn Uniswap V4 swap fees (3-48% APY) ~~~~                         |
+   |                           |                           |                        |
+   |  2. Agent cron detects payrollDate reached            |                        |
+   |     execute(payrollId)    |                           |                        |
+   |-------------------------->|                           |                        |
+   |   removeLiquidity()       |                           |                        |
+   |   swap(USDT -> USDC)      |                           |                        |
+   |   yield -> employer       |                           |                        |
+   |   principal -> Gateway    |  depositFor(agent, amt)   |                        |
+   |                           |-------------------------->|                        |
+   |   position.executed=true  |                           |                        |
+   |                           |                           |                        |
+   |  3. Distribution cron picks up executed payroll       |                        |
+   |     Query Gateway balance |                           |                        |
+   |     Sign EIP-712 burn     |                           |                        |
+   |     POST /v1/transfer     |                           |                        |
+   |---------------------------|-------------------------->|                        |
+   |                           |  <-- attestation + sig    |                        |
+   |                           |                           |                        |
+   |  4. mintVerifyAndDistribute(attestation, sig, ...)    |                        |
+   |------------------------------------------------------------------>|
+   |                           |                           |  gatewayMint()         |
+   |                           |                           |----------------------->|
+   |                           |                           |  Verify state hash     |
+   |                           |                           |  Pro-rata distribute:  |
+   |                           |                           |  Employee A: 3000 USDC |
+   |                           |                           |  Employee B: 4000 USDC |
+   |                           |                           |  Employee C: 3000 USDC |
+   |                           |                           |                        |
+   |  5. markDistributed(pid)  |                           |                        |
+   |-------------------------->|                           |                        |
+   |   position.distributed=true                           |                        |
 ```
 
 ## Architecture
@@ -21,8 +54,10 @@ Cross-chain payroll management platform with yield optimization. Deposit USDC, e
 ```
                           +----------------------------------+
                           |        ArcFlow Agent             |
-                          |  - Payroll Cron (60s)            |
+                          |  - Execute Cron (60s)            |
+                          |  - Distribution Cron (15min)     |
                           |  - APY Monitor (6hr)             |
+                          |  - Rebalance (after APY update)  |
                           |  - Chat Interface (OpenAI)       |
                           +----------------+-----------------+
                                            |
@@ -34,12 +69,14 @@ Cross-chain payroll management platform with yield optimization. Deposit USDC, e
 |  (Chain 84532) |               | (Chain 11155111)|                | (Chain 5042002) |
 +----------------+               +-----------------+                +-----------------+
 | ArcFlowRouter  |               | ArcFlowRouter   |                | PayrollDistrib. |
-| - deposit()    |<--- APY --->  | - deposit()     |                | - distribute()  |
-| - execute()    |   rebalance   | - execute()     |                +-----------------+
-| - cancel()     |               | - cancel()      |                         ^
-+----------------+               +-----------------+                         |
+| - deposit()    |<--- APY --->  | - deposit()     |                | - mintVerify    |
+| - execute()    |   rebalance   | - execute()     |                |   AndDistribute |
+| - cancel()     |               | - cancel()      |                | - emergencyWith |
+| - markDistrib()|               | - markDistrib() |                +-----------------+
++----------------+               +-----------------+                         ^
 | StateManager   |               | StateManager    |                         |
 | - APY tracking |               | - APY tracking  |                         |
+| - batchUpdate  |               | - batchUpdate   |                         |
 +----------------+               +-----------------+                         |
 | Migration      |               | Migration       |                         |
 | - migrateOut() |<------------>| - migrateIn()   |                         |
@@ -48,165 +85,342 @@ Cross-chain payroll management platform with yield optimization. Deposit USDC, e
         +----------------------------------+----------------------------------+
                                            |
                           +----------------v-----------------+
-                          |      Circle CCTP Bridge          |
-                          |  - Burn USDC on source chain     |
-                          |  - Mint USDC on Arc Chain        |
+                          |      Circle Gateway Bridge       |
+                          |  GatewayWallet: depositFor()     |
+                          |  EIP-712 burn intent signing     |
+                          |  Gateway API: /v1/transfer       |
+                          |  GatewayMinter: gatewayMint()    |
                           +----------------------------------+
 ```
 
-## User Flow
+## Contract Flow
 
-### Step 1: Deposit USDC
-
-Employer deposits USDC and specifies payroll details:
+### 1. Deposit
 
 ```solidity
 // ArcFlowRouter.deposit()
-router.deposit(
-    10000e6,                    // 10,000 USDC
-    1740787200,                 // Payroll date (Unix timestamp)
-    [
-        { wallet: 0x123..., amount: 3000e6 },
-        { wallet: 0x456..., amount: 4000e6 },
-        { wallet: 0x789..., amount: 3000e6 }
-    ]
-);
+function deposit(
+    uint256 amt,       // USDC amount (6 decimals)
+    uint256 date,      // Payroll date (unix timestamp, must be future)
+    PayrollRecipient[] memory r  // [{wallet, amount}, ...]
+) external returns (uint256 pid, uint128 liq)
 ```
 
-**What happens:**
-1. USDC transferred from employer to Router
-2. Half swapped to USDT via Uniswap V4
-3. Full-range LP position created (USDC/USDT)
-4. Position tracked with payroll metadata
-5. Recipient data hashed for later verification
-
-### Step 2: Earn Yield (Uniswap V4)
-
 ```
-                    Uniswap V4 Pool (USDC/USDT)
-
-    +--------------------------------------------------+
-    |                                                  |
-    |   Deposited: 10,000 USDC                         |
-    |   +---------------------------------------------+|
-    |   |  LP Position (Full Range)                   ||
-    |   |  - 5,000 USDC                               ||
-    |   |  - 5,000 USDT (swapped)                     ||
-    |   |  - Earns swap fees (~3-5% APY)              ||
-    |   +---------------------------------------------+|
-    |                                                  |
-    |   After 30 days: ~10,041 USDC equivalent         |
-    |   Yield: ~$41 (4.1% APY)                         |
-    +--------------------------------------------------+
-```
-
-**APY Optimization:**
-- Agent monitors yields across chains via DefiLlama
-- If another chain has >0.5% higher APY, funds migrate automatically
-- Migration uses Circle CCTP Bridge for cross-chain USDC transfers
-
-### Step 3: Execute Payroll
-
-On payroll date, the agent executes:
-
-```
-    Agent                                             Blockchain
-      |                                                    |
-      |  1. getReadyPayrolls()                             |
-      |--------------------------------------------------->|
-      |                                                    |
-      |  2. execute(payrollId)                             |
-      |--------------------------------------------------->|
-      |                                                    |
-      |     3. Remove LP liquidity                         |
-      |     4. Swap USDT -> USDC                           |
-      |     5. Send yield to provider                      |
-      |     6. Bridge deposit to Circle Gateway            |
-      |                                                    |
+Employer                         Router                          Uniswap V4
+   |                               |                                |
+   |  USDC.approve(router, amt)    |                                |
+   |------------------------------>|                                |
+   |  deposit(amt, date, recipients)                                |
+   |------------------------------>|                                |
+   |                               |  transferFrom(employer, amt)   |
+   |                               |  swap(USDC -> USDT, amt/2)    |
+   |                               |------------------------------->|
+   |                               |  addLiquidity(USDC, USDT)     |
+   |                               |------------------------------->|
+   |                               |                                |
+   |                               |  Store LPPosition {           |
+   |                               |    payrollId, provider,       |
+   |                               |    liquidity, usdcDeposited,  |
+   |                               |    payrollDate, recipients,   |
+   |                               |    payrollStateHash,          |
+   |                               |    sourceChainId, currentChain|
+   |                               |    executed: false,           |
+   |                               |    distributed: false         |
+   |                               |  }                            |
+   |                               |  Push to activePayrollIds     |
+   |                               |  Push to providerPayrolls     |
+   |  <-- returns (payrollId, liq) |                                |
 ```
 
-### Step 4: Cancel Payroll (Optional)
+### 2. Execute (Agent Cron - every 60s)
 
-Employers can cancel a payroll before its scheduled date:
+The agent cron fetches `getActiveIds()` then `getPos()` for each, filters for payrolls where `payrollDate <= now && liquidity > 0 && !executed`.
 
-```
-    Employer                                          Blockchain
-      |                                                    |
-      |  1. cancel(payrollId)                              |
-      |--------------------------------------------------->|
-      |                                                    |
-      |     2. Verify provider == msg.sender               |
-      |     3. Verify block.timestamp < payrollDate        |
-      |     4. Remove LP liquidity                         |
-      |     5. Swap USDT -> USDC                           |
-      |     6. Return all USDC to provider                 |
-      |                                                    |
+```solidity
+// ArcFlowRouter.execute()
+function execute(uint256 pid) external onlyAgent returns (uint256 amt)
 ```
 
-If the position was migrated to another chain, the agent first migrates it back before the employer can cancel.
+```
+Agent                            Router                     Gateway Wallet
+  |                                |                              |
+  |  getActiveIds()                |                              |
+  |------------------------------->|                              |
+  |  <-- [1, 2, 3]                |                              |
+  |                                |                              |
+  |  getPos(pid) for each          |                              |
+  |------------------------------->|                              |
+  |  <-- LPPosition (check ready) |                              |
+  |                                |                              |
+  |  execute(payrollId)            |                              |
+  |------------------------------->|                              |
+  |                                |  _withdraw():                |
+  |                                |    removeLiquidity(liq)      |
+  |                                |    swap(USDT -> USDC)        |
+  |                                |    if yield > 0:             |
+  |                                |      transfer yield -> employer
+  |                                |                              |
+  |                                |  USDC.approve(gateway, amt)  |
+  |                                |  depositFor(USDC, agent, amt)|
+  |                                |----------------------------->|
+  |                                |                              |
+  |                                |  position.liquidity = 0     |
+  |                                |  position.executed = true    |
+  |  <-- returns amt               |                              |
+  |                                |                              |
+  |  Update MongoDB: status=executed                              |
+```
 
-### Step 5: Distribution (Arc Chain)
+### 3. Distribute (Distribution Cron - every 15min)
+
+The distribution cron fetches all positions and filters for `executed && !distributed`. It bridges funds from source chain to Arc via Circle Gateway, then distributes on Arc.
 
 ```
-    Circle Gateway                Arc Chain                  Recipients
-         |                           |                           |
-         |  Mint USDC                |                           |
-         |-------------------------->|                           |
-         |                           |                           |
-         |     distribute(recipients)                            |
-         |                           |-------------------------->|
-         |                           |                           |
-         |                           |  0x123: 3,000 USDC        |
-         |                           |  0x456: 4,000 USDC        |
-         |                           |  0x789: 3,000 USDC        |
+Agent                  Source Chain        Gateway API          Arc Chain
+  |                        |                    |                    |
+  |  getActiveIds()        |                    |                    |
+  |----------------------->|                    |                    |
+  |  getPos() filter       |                    |                    |
+  |  executed && !distributed                   |                    |
+  |                        |                    |                    |
+  |  POST /v1/balances     |                    |                    |
+  |  {depositor, domain}   |                    |                    |
+  |------------------------------------------->|                    |
+  |  <-- balance: "1.21"   |                    |                    |
+  |                        |                    |                    |
+  |  Sign EIP-712 BurnIntent {                  |                    |
+  |    maxFee: 0.02 USDC,                       |                    |
+  |    spec: {                                  |                    |
+  |      sourceDomain -> destDomain (26),       |                    |
+  |      value: balance - fee,                  |                    |
+  |      destinationRecipient: distributor      |                    |
+  |    }                                        |                    |
+  |  }                                          |                    |
+  |                        |                    |                    |
+  |  POST /v1/transfer     |                    |                    |
+  |------------------------------------------->|                    |
+  |  <-- attestation + sig |                    |                    |
+  |                        |                    |                    |
+  |  Sign payroll state hash (EIP-191)          |                    |
+  |  keccak256(pid, provider, amt, date, chainId, recipientsHash)   |
+  |                        |                    |                    |
+  |  mintVerifyAndDistribute(                   |                    |
+  |    attestation, sig,                        |                    |
+  |    pid, provider, amt, date,                |                    |
+  |    stateSignature, recipients)              |                    |
+  |------------------------------------------------------------>|
+  |                        |                    |  gatewayMint() |
+  |                        |                    |--------------->|
+  |                        |                    |  USDC minted   |
+  |                        |                    |                |
+  |                        |                    |  Verify state: |
+  |                        |                    |  - recompute   |
+  |                        |                    |    stateHash   |
+  |                        |                    |  - recover     |
+  |                        |                    |    signer      |
+  |                        |                    |  - check       |
+  |                        |                    |    authorized  |
+  |                        |                    |                |
+  |                        |                    |  Pro-rata dist:|
+  |                        |                    |  payout[i] =   |
+  |                        |                    |  minted *      |
+  |                        |                    |  r[i].amount / |
+  |                        |                    |  totalAmount   |
+  |                        |                    |                |
+  |                        |                    |  safeTransfer  |
+  |                        |                    |  to each wallet|
+  |                        |                    |                    |
+  |  markDistributed(pid)  |                    |                    |
+  |----------------------->|                    |                    |
+  |  position.distributed = true                |                    |
+  |                        |                    |                    |
+  |  Update MongoDB: status=settled, distributed=true               |
 ```
+
+### 4. Cancel (Before Payroll Date)
+
+```solidity
+// ArcFlowRouter.cancel() — only provider, only before payrollDate
+function cancel(uint256 pid) external returns (uint256 amt)
+```
+
+```
+Employer                         Router                          Uniswap V4
+   |                               |                                |
+   |  cancel(payrollId)            |                                |
+   |------------------------------>|                                |
+   |                               |  require(provider == sender)   |
+   |                               |  require(now < payrollDate)    |
+   |                               |  removeLiquidity(liq)          |
+   |                               |------------------------------->|
+   |                               |  swap(USDT -> USDC)            |
+   |                               |------------------------------->|
+   |                               |                                |
+   |                               |  delete positions[pid]         |
+   |                               |  remove from activePayrollIds  |
+   |                               |  remove from providerPayrolls  |
+   |                               |                                |
+   |  <-- USDC returned to wallet  |                                |
+```
+
+### 5. Cross-Chain Migration (APY Optimization)
+
+When APY is higher on another chain (>0.5% diff), the agent migrates positions.
+
+```
+Agent                   Source Chain              Gateway              Target Chain
+  |                         |                        |                      |
+  |  getBestChainForApy()   |                        |                      |
+  |------------------------>|                        |                      |
+  |  <-- chainId, apy       |                        |                      |
+  |                         |                        |                      |
+  |  shouldMigrate(pid)     |                        |                      |
+  |------------------------>|                        |                      |
+  |  <-- true, targetChain, apyDiff                  |                      |
+  |                         |                        |                      |
+  |  migrateOut(pid, target)|                        |                      |
+  |------------------------>|                        |                      |
+  |   removeLiquidity()     |                        |                      |
+  |   depositFor(agent,amt) |                        |                      |
+  |                         |----------------------->|                      |
+  |   updatePosChain(target)|                        |                      |
+  |                         |                        |                      |
+  |  Sign EIP-712 burn intent                        |                      |
+  |  POST /v1/transfer      |                        |                      |
+  |  <-- attestation + sig  |                        |                      |
+  |                         |                        |                      |
+  |  migrateIn(pid, sourceChain, amt, attestation, sig)                     |
+  |-------------------------------------------------------------------->|
+  |                         |                        |  gatewayMint()    |
+  |                         |                        |----------------->|
+  |                         |                        |  addLiquidity()  |
+  |                         |                        |  updatePosChain()|
+  |                         |                        |                  |
+```
+
+## Position Lifecycle
+
+```
+  DEPOSITED                EXECUTED                  DISTRIBUTED
+ +-------------+         +-------------+           +-------------+
+ | liquidity>0 | execute | liquidity=0 | distribute| liquidity=0 |
+ | executed: F |-------->| executed: T |---------->| executed: T |
+ | distrib.: F |  (cron) | distrib.: F |   (cron)  | distrib.: T |
+ +-------------+  60s    +-------------+   15min   +-------------+
+       |                                                  |
+       | cancel (provider,                                |
+       | before payrollDate)                              |
+       v                                           MongoDB status:
+   CANCELLED                                        "settled"
+ +-------------+
+ | deleted from|
+ | storage     |
+ | USDC back   |
+ | to employer |
+ +-------------+
+```
+
+## Live Transactions
+
+| Step | Transaction |
+|------|-------------|
+| Deposit | [`0x3ab00524...`](https://sepolia.basescan.org/tx/0x3ab005247ab96b08717a681b3b9168a070199818bea9a478ad6fd92f2a8e7eff) |
+| Execute | [`0xfef3b605...`](https://sepolia.basescan.org/tx/0xfef3b605ce929f9df1a2f24a90c957c7ae56aeb94dac9906ec60048bdeb6aa36) |
+
+## Deployed Contracts
+
+### Base Sepolia (Chain 84532)
+
+| Contract | Address |
+|----------|---------|
+| PoolManager | [`0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408`](https://sepolia.basescan.org/address/0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408) |
+| Router | [`0x5a73E232fA6c3E3a1d4Cfa64775b0cfE284AaE77`](https://sepolia.basescan.org/address/0x5a73E232fA6c3E3a1d4Cfa64775b0cfE284AaE77) |
+| StateManager | [`0x92bc6404233CD678f59768b65d8C060239Ac4A61`](https://sepolia.basescan.org/address/0x92bc6404233CD678f59768b65d8C060239Ac4A61) |
+| Migration | [`0x68216805173074b1F9D6D28c642aBf269F42B233`](https://sepolia.basescan.org/address/0x68216805173074b1F9D6D28c642aBf269F42B233) |
+| USDC | [`0x036CbD53842c5426634e7929541eC2318f3dCF7e`](https://sepolia.basescan.org/address/0x036CbD53842c5426634e7929541eC2318f3dCF7e) |
+| USDT | [`0x97078835e54862f808e9D77c3BD50019700ac952`](https://sepolia.basescan.org/address/0x97078835e54862f808e9D77c3BD50019700ac952) |
+
+### Sepolia (Chain 11155111)
+
+| Contract | Address |
+|----------|---------|
+| PoolManager | [`0xE03A1074c86CFeDd5C142C4F04F1a1536e203543`](https://sepolia.etherscan.io/address/0xE03A1074c86CFeDd5C142C4F04F1a1536e203543) |
+| Router | [`0x44664E955Ec0BCf74d69B1a66Ae327da6a5BC4D5`](https://sepolia.etherscan.io/address/0x44664E955Ec0BCf74d69B1a66Ae327da6a5BC4D5) |
+| StateManager | [`0x4290244fc9E9542e9c905C3C735A7912841E9757`](https://sepolia.etherscan.io/address/0x4290244fc9E9542e9c905C3C735A7912841E9757) |
+| Migration | [`0x2b44A66E84920Ef71f59Fd78B7a450121455D00f`](https://sepolia.etherscan.io/address/0x2b44A66E84920Ef71f59Fd78B7a450121455D00f) |
+| USDC | [`0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238`](https://sepolia.etherscan.io/address/0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238) |
+| USDT | [`0xaA8E23Fb1079EA71e0a56F48a2aA51851D8433D0`](https://sepolia.etherscan.io/address/0xaA8E23Fb1079EA71e0a56F48a2aA51851D8433D0) |
+
+### Arc Testnet (Chain 5042002)
+
+| Contract | Address |
+|----------|---------|
+| Distributor | [`0xb44e184AB697a5dE2DBfa00EC02a125f64563D1f`](https://testnet.arcscan.app/address/0xb44e184AB697a5dE2DBfa00EC02a125f64563D1f) |
+| GatewayMinter | [`0x0022222ABE238Cc2C7Bb1f21003F0a260052475B`](https://testnet.arcscan.app/address/0x0022222ABE238Cc2C7Bb1f21003F0a260052475B) |
+| USDC (ERC20) | [`0x3600000000000000000000000000000000000000`](https://testnet.arcscan.app/token/0x3600000000000000000000000000000000000000) |
+
+### Circle Gateway (All Chains)
+
+| Contract | Address |
+|----------|---------|
+| GatewayWallet | `0x0077777d7EBA4688BDeF3E311b846F25870A19B9` |
+| GatewayMinter | `0x0022222ABE238Cc2C7Bb1f21003F0a260052475B` |
+
+| Chain | Gateway Domain |
+|-------|---------------|
+| Ethereum Sepolia | 0 |
+| Base Sepolia | 6 |
+| Arc Testnet | 26 |
+
+## Agent Cron Jobs
+
+| Cron | Interval | What It Does |
+|------|----------|--------------|
+| **Execute** | 60s | Fetches `getActiveIds()` + `getPos()`, filters `payrollDate <= now && !executed`, calls `execute(pid)` |
+| **Distribute** | 15min | Filters `executed && !distributed`, bridges via Gateway burn intent, calls `mintVerifyAndDistribute` on Arc, then `markDistributed` on source chain |
+| **APY Monitor** | 6hr | Fetches USDC/USDT yields from DefiLlama, calls `StateManager.batchUpdateChainApy()` on all chains |
+| **Rebalance** | After APY | Calls `shouldMigrate(pid)` for each active payroll, executes `migrateOut/In` if APY diff > 0.5% |
 
 ## Key Integrations
 
 ### Uniswap V4
 
-USDC deposits earn yield through concentrated liquidity:
+USDC deposits earn yield through full-range LP positions:
 
-| Feature | Implementation |
-|---------|----------------|
-| Pool | USDC/USDT with 500 fee tier |
-| Position | Full-range (-887220 to 887220 ticks) |
+| Feature | Detail |
+|---------|--------|
+| Pool | USDC/USDT, 500 fee tier (0.05%) |
+| Position | Full-range ticks (-887220 to 887220) |
 | Yield | Swap fees from stablecoin trades |
-| APY | ~3-5% (varies with volume) |
+| APY Source | DefiLlama API, updated every 6 hours |
+| Deposit | 50% swapped to USDT, both added as LP |
+| Withdraw | Remove LP, swap USDT back to USDC |
 
-### Circle CCTP Bridge
+### Circle Gateway Bridge
 
-Cross-chain USDC transfers via native burn/mint:
+Cross-chain USDC transfers via EIP-712 signed burn intents:
 
-| Network | Gateway Wallet | Gateway Minter |
-|---------|----------------|----------------|
-| Testnet | `0x0077777d7EBA4688BDeF3E311b846F25870A19B9` | `0x0022222ABE238Cc2C7Bb1f21003F0a260052475B` |
+```
+1. Router.execute() calls gatewayWallet.depositFor(USDC, agent, amt)
+2. Agent queries Gateway API for available balance
+3. Agent signs EIP-712 BurnIntent { maxFee: 0.02 USDC, TransferSpec }
+4. POST /v1/transfer -> returns attestation + signature
+5. gatewayMinter.gatewayMint(attestation, signature) on Arc Chain
+6. Distributor verifies state hash + distributes pro-rata
+```
 
-## Deployed Contracts
+### ArcPayrollDistributor (Arc Chain)
 
-### Base Sepolia (84532)
+Receives bridged USDC and distributes to employees:
 
-| Contract | Address |
-|----------|---------|
-| PoolManager | `0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408` |
-| Router | `0x941800436155Aad7c028f91A6E228935424C1D2d` |
-| StateManager | `0xe09a64D36A357b775EFA500266199E4eBb40d124` |
-| Migration | `0xcFc45554F7097D42f0991031C15F9EB8f956673B` |
-
-### Sepolia (11155111)
-
-| Contract | Address |
-|----------|---------|
-| PoolManager | `0xE03A1074c86CFeDd5C142C4F04F1a1536e203543` |
-| Router | `0x45A1dCff7146E9e77E9c5D48b74dfb9950cA5B08` |
-| StateManager | `0xf59B9e400C63E7e8d5B6D6fc0Caff09256Fd23ba` |
-| Migration | `0xeAA7B3747e0d35B1e4850c6046fD18F699F51FB6` |
-
-### Arc Testnet (5042002)
-
-| Contract | Address |
-|----------|---------|
-| Distributor | `0xD5851fB58A875cEBabf6828F93416A062D737907` |
+| Feature | Detail |
+|---------|--------|
+| State verification | Recomputes `keccak256(pid, provider, amt, date, chainId, recipientsHash)` |
+| Signature check | Recovers signer from EIP-191 signed state hash, must be authorized agent |
+| Replay protection | `processedPayrolls[stateHash]` mapping prevents double-distribution |
+| Pro-rata payout | `payout[i] = minted * recipients[i].amount / totalAmount` handles bridge fee deductions |
+| Token | ERC20 USDC at `0x3600...` (not native) |
 
 ## Quick Start
 
@@ -215,13 +429,15 @@ Cross-chain USDC transfers via native burn/mint:
 ```bash
 cd contracts
 cp .env.example .env
-# Edit .env with your keys
+# Edit .env with PRIVATE_KEY and ALCHEMY_API_KEY
 
-# Deploy to all chains
+# Deploy to all chains + merge addresses
 ./deploy.sh all
 
-# Merge addresses for agent
-./deploy.sh merge
+# Or deploy individually (auto-merges)
+./deploy.sh baseSepolia
+./deploy.sh sepolia
+./deploy.sh arc
 ```
 
 ### 2. Run Agent
@@ -229,10 +445,11 @@ cp .env.example .env
 ```bash
 cd agent
 cp .env.example .env
-# Edit .env with your keys
+# Edit .env with OPENAI_API_KEY, MONGODB_URI, AGENT_PRIVATE_KEY, ALCHEMY_API_KEY
 
 npm install
 npm run dev
+# Starts Express server + all cron jobs
 ```
 
 ### 3. Run Frontend
@@ -245,55 +462,57 @@ npm run dev
 
 ### 4. Create Payroll (via Chat)
 
-```bash
-# Set payroll date
-curl -X POST http://localhost:3001/api/chat \
-  -F "message=Set up payroll for March 1st"
+```
+User: "Set up payroll for March 1st"
+Agent: Sets payroll date, asks for recipients
 
-# Upload recipients CSV
-curl -X POST http://localhost:3001/api/chat \
-  -F "sessionId=<session-id>" \
-  -F "file=@employees.csv"
+User: uploads employees.csv
+Agent: Parses CSV, shows recipients + amounts
 
-# Get deposit transaction
-curl -X POST http://localhost:3001/api/chat \
-  -F "sessionId=<session-id>" \
-  -F "message=My wallet is 0x..."
+User: "My wallet is 0x50A1..."
+Agent: Returns approve() + deposit() transactions to sign
 ```
 
 ## Project Structure
 
 ```
 arcflow/
-├── contracts/           # Solidity smart contracts (Foundry)
+├── contracts/               # Solidity (Foundry, ^0.8.24)
 │   ├── src/
-│   │   ├── ArcFlowRouter.sol       # Main deposit, execute, cancel
-│   │   ├── ArcFlowBase.sol         # Uniswap V4 LP operations
-│   │   ├── ArcFlowStateManager.sol # APY tracking, migration validation
-│   │   ├── ArcFlowMigration.sol    # Cross-chain migration
-│   │   ├── ArcFlowTypes.sol        # Shared structs (LPPosition, PayrollRecipient)
-│   │   └── ArcPayrollDistributor.sol # Arc chain distribution
-│   ├── script/          # Deployment scripts
-│   └── test/            # Integration tests
+│   │   ├── ArcFlowRouter.sol         # deposit, execute, cancel, markDistributed
+│   │   ├── ArcFlowBase.sol           # Uniswap V4 LP: add/remove/swap, unlock callbacks
+│   │   ├── ArcFlowStateManager.sol   # APY tracking, migration validation
+│   │   ├── ArcFlowMigration.sol      # migrateOut/migrateIn via Circle Gateway
+│   │   ├── ArcFlowTypes.sol          # LPPosition, PayrollRecipient, CallbackData
+│   │   ├── ArcPayrollDistributor.sol # Arc chain: mint + verify + distribute (ERC20)
+│   │   └── interfaces/
+│   │       └── ICircleGateway.sol     # IGatewayWallet, IGatewayMinter
+│   ├── script/                # Deploy scripts (00_DeployAll, 01_Distributor, 02_Merge)
+│   └── deploy.sh              # Multi-chain deployment CLI
 │
-├── agent/               # TypeScript backend service
+├── agent/                     # TypeScript (Express, OpenAI, MongoDB)
 │   ├── src/
-│   │   ├── index.ts     # Express server
-│   │   ├── cron.ts      # Payroll execution & APY monitoring cron
-│   │   ├── contracts.ts # Contract interaction service
-│   │   ├── defillama.ts # DefiLlama yield API
+│   │   ├── index.ts           # Express server entry
+│   │   ├── cron.ts            # PayrollCron: execute, distribute, APY, rebalance
+│   │   ├── contracts.ts       # ContractService: read/write calldata generation
+│   │   ├── config.ts          # Chain IDs, Gateway domains, RPC URLs
+│   │   ├── defillama.ts       # DefiLlama yield API
+│   │   ├── abis.json          # Contract ABIs
+│   │   ├── addresses.json     # Deployed contract addresses (auto-generated)
+│   │   ├── models/
+│   │   │   └── Payroll.ts     # MongoDB schema (payrollId, recipients, status, distributed)
 │   │   └── routes/
-│   │       └── chat.ts  # OpenAI chat with function calling + SSE
-│   └── README.md
+│   │       └── chat.ts        # OpenAI function calling + SSE streaming
+│   └── package.json
 │
-├── frontend/            # React + Vite frontend
+├── frontend/                  # React + Vite
 │   ├── src/
-│   │   ├── pages/       # Landing, AgentChat
-│   │   ├── components/  # Chat, Sidebar, Payrolls, Connect
-│   │   └── contexts/    # Auth (Circle Wallets), Theme
-│   └── README.md
+│   │   ├── pages/             # Landing, AgentChat
+│   │   ├── components/        # Chat, Sidebar, Payrolls, Connect
+│   │   └── contexts/          # Auth (Circle Wallets), Theme
+│   └── package.json
 │
-└── README.md            # This file
+└── README.md
 ```
 
 ## Security
@@ -302,24 +521,25 @@ arcflow/
 
 | Role | Permissions |
 |------|-------------|
-| Employer | Deposit USDC, cancel payrolls, view positions |
-| Agent | Execute ready payrolls, trigger migrations |
-| Owner | Set agent address, rescue tokens, seed pool |
-| Migration | Remove/add liquidity for cross-chain transfers |
+| Employer | `deposit()`, `cancel()` (own payrolls only, before date) |
+| Agent | `execute()`, `markDistributed()`, `migrateOut/In()`, `batchUpdateChainApy()` |
+| Owner | `setAgent()`, `setMigration()`, `setGateway()`, `rescue()`, `seed()` |
 
-### Safety Features
+### Position Data Preservation
 
-- Only the position's provider (employer) can cancel
-- Cancellation blocked after payroll date
-- Cancellation blocked if position is on another chain (must migrate back first)
-- Only the registered agent can execute payrolls
-- Recipient data hashed at deposit time for verification at distribution
+Executed payrolls are **not deleted** from storage. Instead:
+- `executed = true` after LP removal + Gateway deposit
+- `distributed = true` after Arc chain distribution + `markDistributed()`
+- `liquidity = 0` prevents re-execution (reverts with `NoPosition`)
+- Full position data (provider, amount, date, recipients hash) remains queryable
+- Cancel **does** delete position data and returns USDC to employer
 
-## Documentation
+### Distribution Safety
 
-- [Agent README](./agent/README.md) - API endpoints, chat examples, cron jobs
-- [Contracts README](./contracts/README.md) - Deployment, testing, contract details
-- [Frontend README](./frontend/README.md) - Setup, tech stack, pages
+- State hash verified on-chain: `keccak256(pid, provider, amt, date, chainId, recipientsHash)`
+- Agent signature verified via ECDSA recover + authorized agent check
+- Replay protection via `processedPayrolls[stateHash]` mapping
+- Pro-rata distribution handles bridge fee deductions fairly
 
 ## License
 
