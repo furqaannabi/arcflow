@@ -627,7 +627,7 @@ export class PayrollCron {
   }
 
   /**
-   * Execute full migration: migrateOut → Gateway burn intent → Gateway API → migrateIn on target
+   * Execute migration directly via the migration contract
    */
   async executeMigration(
     chainConfig: ChainConfig,
@@ -635,122 +635,16 @@ export class PayrollCron {
     targetChainId: bigint
   ): Promise<string> {
     const walletClient = this.getWalletClient(chainConfig);
-    const client = this.getClient(chainConfig);
-    const account = privateKeyToAccount(this.privateKey as `0x${string}`);
-
-    // 1. Call migrateOut (removes LP, deposits to Gateway for agent)
-    const migrateOutHash = await walletClient.writeContract({
+    const arcClient = this.getClient(chainConfig, true);
+    const hash = await walletClient.writeContract({
       address: chainConfig.migration,
       abi: MIGRATION_ABI,
       functionName: "migrateOut",
       args: [payrollId, targetChainId],
     });
-    console.log(`[REBALANCE] migrateOut TX: ${migrateOutHash}`);
-    await client.waitForTransactionReceipt({ hash: migrateOutHash });
-    console.log(`[REBALANCE] migrateOut confirmed`);
 
-    // 2. Check Gateway balance for agent
-    const gatewayBalance = await client.readContract({
-      address: GATEWAY_WALLET as Address,
-      abi: GATEWAY_WALLET_ABI,
-      functionName: "availableBalance",
-      args: [chainConfig.usdc, account.address],
-    }) as bigint;
-    console.log(`[REBALANCE] Gateway available balance: ${gatewayBalance}`);
-
-    // 3. Find target chain config
-    const targetConfig = CHAIN_CONFIGS.find(c => c.id === Number(targetChainId));
-    if (!targetConfig) throw new Error(`Unknown target chain ${targetChainId}`);
-
-    const sourceDomain = GATEWAY_DOMAINS[chainConfig.id];
-    const destDomain = GATEWAY_DOMAINS[targetConfig.id];
-
-    // 4. Sign EIP-712 burn intent: source chain → target chain
-    const burnIntent = {
-      maxBlockHeight: maxUint256,
-      maxFee: MAX_FEE,
-      spec: {
-        version: 1,
-        sourceDomain,
-        destinationDomain: destDomain,
-        sourceContract: GATEWAY_WALLET as Address,
-        destinationContract: GATEWAY_MINTER_ADDRESS,
-        sourceToken: chainConfig.usdc,
-        destinationToken: targetConfig.usdc,
-        sourceDepositor: account.address,
-        destinationRecipient: targetConfig.migration, // Mint to migration contract on target
-        sourceSigner: account.address,
-        destinationCaller: zeroAddress,
-        value: gatewayBalance,
-        salt: ("0x" + randomBytes(32).toString("hex")) as Hex,
-        hookData: "0x" as Hex,
-      },
-    };
-
-    const typedData = {
-      types: { EIP712Domain, TransferSpec, BurnIntent },
-      domain: EIP712_DOMAIN,
-      primaryType: "BurnIntent" as const,
-      message: {
-        ...burnIntent,
-        spec: {
-          ...burnIntent.spec,
-          sourceContract: pad(burnIntent.spec.sourceContract.toLowerCase() as `0x${string}`, { size: 32 }),
-          destinationContract: pad(burnIntent.spec.destinationContract.toLowerCase() as `0x${string}`, { size: 32 }),
-          sourceToken: pad(burnIntent.spec.sourceToken.toLowerCase() as `0x${string}`, { size: 32 }),
-          destinationToken: pad(burnIntent.spec.destinationToken.toLowerCase() as `0x${string}`, { size: 32 }),
-          sourceDepositor: pad(burnIntent.spec.sourceDepositor.toLowerCase() as `0x${string}`, { size: 32 }),
-          destinationRecipient: pad(burnIntent.spec.destinationRecipient.toLowerCase() as `0x${string}`, { size: 32 }),
-          sourceSigner: pad(burnIntent.spec.sourceSigner.toLowerCase() as `0x${string}`, { size: 32 }),
-          destinationCaller: pad(burnIntent.spec.destinationCaller.toLowerCase() as `0x${string}`, { size: 32 }),
-        },
-      },
-    };
-
-    const burnSignature = await account.signTypedData(typedData as any);
-    console.log(`[REBALANCE] Burn intent signed`);
-
-    // 5. Submit to Gateway API
-    const requests = [{ burnIntent: typedData.message, signature: burnSignature }];
-    const response = await fetch(GATEWAY_API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(requests, (_key, value) =>
-        typeof value === "bigint" ? value.toString() : value,
-      ),
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Gateway API failed: ${response.status} ${errText}`);
-    }
-
-    const gatewayResponse = await response.json();
-    const { attestation, signature: gatewaySig } = gatewayResponse;
-    console.log(`[REBALANCE] Gateway API response received`);
-
-    // 6. Call migrateIn on target chain
-    const targetWalletClient = this.getWalletClient(targetConfig);
-    const targetClient = this.getClient(targetConfig);
-
-    const migrateInHash = await targetWalletClient.writeContract({
-      address: targetConfig.migration,
-      abi: MIGRATION_ABI,
-      functionName: "migrateIn",
-      args: [
-        payrollId,
-        BigInt(chainConfig.id),
-        gatewayBalance,
-        attestation as Hex,
-        gatewaySig as Hex,
-      ],
-    });
-    console.log(`[REBALANCE] migrateIn TX: ${migrateInHash}`);
-
-    await targetClient.waitForTransactionReceipt({ hash: migrateInHash });
-    console.log(`[REBALANCE] migrateIn confirmed on ${targetConfig.name}`);
-
-    return migrateOutHash;
+    console.log(`[REBALANCE] Migration TX: ${hash}`);
+    return hash;
   }
 
   /**
