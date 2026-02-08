@@ -431,6 +431,33 @@ Cross-chain USDC transfers via EIP-712 signed burn intents:
 6. Distributor verifies state hash + distributes pro-rata
 ```
 
+### Circle Modular Wallets (Frontend)
+
+The frontend uses Circle Modular Wallets for gasless, passkey-based authentication:
+
+| Feature | Detail |
+|---------|--------|
+| SDK | `@circle-fin/modular-wallets-core` |
+| Auth | WebAuthn passkeys (register/login) — no seed phrase |
+| Account | ERC-4337 smart account via `toCircleSmartAccount()` |
+| Gas | Sponsored by Circle Paymaster (`paymaster: true`) — users pay zero gas |
+| Transactions | Sent as UserOperations via bundler (`sendUserOperation`) |
+| Multi-chain | Same address across all chains — switch with `toModularTransport()` |
+| Default chain | Base Sepolia |
+
+```
+User clicks "Connect Wallet"
+  → toPasskeyTransport() + toWebAuthnCredential()
+  → toCircleSmartAccount() with WebAuthn owner
+  → Smart account address displayed
+
+User clicks "Sign & Send" on a transaction
+  → bundlerClient.sendUserOperation({ calls, paymaster: true })
+  → Circle Paymaster sponsors gas
+  → waitForUserOperationReceipt()
+  → Transaction hash returned + explorer link shown
+```
+
 ### ENS Resolution
 
 Employee wallet addresses support ENS names — resolved via Ethereum mainnet:
@@ -585,11 +612,11 @@ Executed payrolls are **not deleted** from storage. Instead:
 
 ## AI Disclosure
 
-This project was built for HackMoney 2026. AI tools (Claude, ChatGPT) were used for:
-- Research on Uniswap V4 hooks, Circle Gateway integration, and EIP-712 typed data
-- Code comments and documentation
-- Parts of boilerplate code and helper functions
-- Debugging and troubleshooting contract size limits, ABI mismatches, and cross-chain flows
+This project was built for HackMoney 2026. AI tools were used during development:
+
+- **Claude Code (CLI)** — Primary development tool for writing Solidity contracts, TypeScript agent code, debugging contract size limits, ABI mismatches, cross-chain flows, and iterating on the full codebase
+- **ChatGPT** — Research on Uniswap V4 hooks, Circle Gateway integration, and EIP-712 typed data
+- Code comments, documentation, and parts of boilerplate/helper functions were AI-assisted
 
 All core architecture, contract logic, agent design, and integration decisions were made by the team.
 
