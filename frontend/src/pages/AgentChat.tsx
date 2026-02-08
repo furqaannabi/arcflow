@@ -15,7 +15,7 @@ interface Message {
   timestamp: Date;
 }
 
-const AGENT_API_URL = "https://arcflow9.vercel.app";
+const AGENT_API_URL = "https://arc.furqaannabi.com";
 
 function WelcomeScreen({ onSuggestionClick }: { onSuggestionClick: (text: string) => void }) {
   const suggestions = [

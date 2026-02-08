@@ -21,7 +21,7 @@ interface PayrollsPanelProps {
   userAddress?: string;
 }
 
-const AGENT_API_URL = "https://arcflow9.vercel.app";
+const AGENT_API_URL = "https://arc.furqaannabi.com";
 const AUTO_REFRESH_INTERVAL = 30000; // 30 seconds
 
 export default function PayrollsPanel({ isOpen, onClose, userAddress }: PayrollsPanelProps) {
