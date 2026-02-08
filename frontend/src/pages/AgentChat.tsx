@@ -15,7 +15,7 @@ interface Message {
   timestamp: Date;
 }
 
-const AGENT_API_URL = "http://localhost:3001";
+const AGENT_API_URL = "https://arc.furqaannabi.com";
 
 function WelcomeScreen({ onSuggestionClick }: { onSuggestionClick: (text: string) => void }) {
   const suggestions = [
@@ -84,9 +84,14 @@ export default function AgentChat() {
   });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  
+  // Flag to skip saving during session switch
+  const isLoadingSession = useRef(false);
 
   // Load messages from localStorage when frontendSessionId changes
   useEffect(() => {
+    isLoadingSession.current = true; // Prevent saves during load
+    
     const stored = localStorage.getItem(`arcflow_messages_${frontendSessionId}`);
     if (stored) {
       try {
@@ -102,11 +107,20 @@ export default function AgentChat() {
     }
     // Reset backend session when switching frontend sessions
     setSessionId(null);
+    
+    // Allow saves after a brief delay to ensure state is settled
+    setTimeout(() => {
+      isLoadingSession.current = false;
+    }, 100);
   }, [frontendSessionId]);
 
   // Save messages to localStorage whenever they change
   const [messagesVersion, setMessagesVersion] = useState(0);
+  
   useEffect(() => {
+    // Skip saving during session load to prevent cross-contamination
+    if (isLoadingSession.current) return;
+    
     if (messages.length > 0) {
       localStorage.setItem(`arcflow_messages_${frontendSessionId}`, JSON.stringify(messages));
       setMessagesVersion(v => v + 1); // Trigger Sidebar to check for new session

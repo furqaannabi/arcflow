@@ -60,6 +60,7 @@ export default function Sidebar({ onNewChat, onSessionChange, activeSessionId: e
   useEffect(() => {
     if (!externalActiveSessionId) return;
     
+    // Get messages for the CURRENT active session only
     const messagesJson = localStorage.getItem(`arcflow_messages_${externalActiveSessionId}`);
     if (!messagesJson) return;
     
@@ -107,7 +108,7 @@ export default function Sidebar({ onNewChat, onSessionChange, activeSessionId: e
     } catch (e) {
       console.error('Failed to process session', e);
     }
-  }, [externalActiveSessionId, messagesVersion]);
+  }, [externalActiveSessionId, messagesVersion]); // messagesVersion needed for title updates
 
   const handleNewChat = () => {
     const newSession: ChatSession = {
