@@ -119,14 +119,16 @@ export default function AgentChat() {
   }, [frontendSessionId]);
 
   // Fetch session state to restore upload button visibility
+  // Only fetch when switching to an existing session (has messages already loaded)
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || messages.length === 0) return;
     
     const fetchSessionState = async () => {
       try {
         const response = await fetch(`${AGENT_API_URL}/api/session/${sessionId}`);
         if (response.ok) {
           const data = await response.json();
+          console.log(`[FILE-UPLOAD] Session state allowFileUpload: ${data.allowFileUpload}`);
           setAllowFileUpload(data.allowFileUpload);
         }
       } catch (error) {
@@ -135,7 +137,7 @@ export default function AgentChat() {
     };
     
     fetchSessionState();
-  }, [sessionId]);
+  }, [sessionId, messages.length]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -238,8 +240,9 @@ export default function AgentChat() {
             if (line.startsWith("data: ")) {
               try {
                 const data = JSON.parse(line.slice(6));
+                console.log('[SSE] Received data:', data);
                 
-                // Handle different event types
+                // Handle different event types (not mutually exclusive)
                 if (data.content !== undefined) {
                   // Token event - append content
                   streamedContent += data.content;
@@ -250,16 +253,27 @@ export default function AgentChat() {
                     }
                     return updated;
                   });
-                } else if (data.sessionId && !sessionId) {
+                }
+                
+                if (data.sessionId && !sessionId) {
                   // Session event
+                  console.log('[SSE] Setting sessionId:', data.sessionId);
                   setSessionId(data.sessionId);
-                } else if (data.error) {
+                }
+                
+                if (data.error) {
                   // Error event
                   throw new Error(data.error);
-                } else if (data.transactions !== undefined || data.allowFileUpload !== undefined) {
+                }
+                
+                if (data.transactions !== undefined || data.allowFileUpload !== undefined) {
                   // Done event - update transactions and upload state
+                  console.log('[SSE] Done event - transactions:', data.transactions, 'allowFileUpload:', data.allowFileUpload);
                   if (data.transactions) transactions = data.transactions;
-                  if (data.allowFileUpload !== undefined) setAllowFileUpload(data.allowFileUpload);
+                  if (data.allowFileUpload !== undefined) {
+                    console.log(`[FILE-UPLOAD] Received allowFileUpload: ${data.allowFileUpload}`);
+                    setAllowFileUpload(data.allowFileUpload);
+                  }
                 }
               } catch (e) {
                 if ((e as Error).message !== "Unexpected end of JSON input") {
