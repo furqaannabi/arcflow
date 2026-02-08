@@ -137,7 +137,7 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "get_approval_transaction",
-      description: "Generate the USDC approval transaction for the router contract",
+      description: "Generate the USDC approval transaction for the router contract. Checks wallet USDC balance first.",
       parameters: {
         type: "object",
         properties: {
@@ -145,8 +145,12 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
             type: "string",
             description: "USDC amount to approve (as string)",
           },
+          userAddress: {
+            type: "string",
+            description: "User's wallet address to check balance",
+          },
         },
-        required: ["amount"],
+        required: ["amount", "userAddress"],
       },
     },
   },
@@ -561,7 +565,25 @@ async function executeTool(
 
     case "get_approval_transaction": {
       const amount = args.amount as string;
+      const userAddr = args.userAddress as Address;
       const amountBigInt = parseUnits(amount, 6);
+
+      // Check USDC balance before approval
+      try {
+        const balance = await contractService.getUsdcBalance(userAddr);
+        const balanceBigInt = parseUnits(balance, 6);
+        if (balanceBigInt < amountBigInt) {
+          return {
+            result: JSON.stringify({
+              error: `Insufficient USDC balance. You have ${balance} USDC but need ${amount} USDC. Please fund your wallet first.`,
+            }),
+            updatedPayroll: updated,
+          };
+        }
+      } catch (err) {
+        console.warn("Balance check failed:", (err as Error).message);
+      }
+
       const txData = contractService.generateApprovalCalldata(amountBigInt);
       return {
         result: JSON.stringify({
@@ -587,9 +609,10 @@ async function executeTool(
         return { result: JSON.stringify({ error: "Total amount not calculated" }), updatedPayroll: updated };
       }
 
-      // Pre-flight checks: verify pool liquidity, balance, and allowance
+      // Pre-flight checks: verify pool liquidity (non-blocking for balance/allowance)
       const totalAmountBigInt = BigInt(updated.totalAmount);
       const totalAmountFormatted = (Number(totalAmountBigInt) / 1e6).toFixed(2);
+      let preflightWarning = "";
       try {
         const poolLiquidity = await contractService.getPoolLiquidity();
         if (poolLiquidity === BigInt(0)) {
@@ -607,32 +630,17 @@ async function executeTool(
         const allowanceBigInt = parseUnits(allowance, 6);
 
         if (balanceBigInt < totalAmountBigInt) {
-          return {
-            result: JSON.stringify({
-              error: `Insufficient USDC balance. You have ${balance} USDC but need ${totalAmountFormatted} USDC. Please fund your wallet first.`,
-            }),
-            updatedPayroll: updated,
-          };
+          preflightWarning = `Warning: wallet shows ${balance} USDC (need ${totalAmountFormatted}). If using a smart account, the balance may differ on-chain.`;
         }
-
         if (allowanceBigInt < totalAmountBigInt) {
-          return {
-            result: JSON.stringify({
-              error: `Insufficient USDC approval. Current allowance is ${allowance} USDC but need ${totalAmountFormatted} USDC. Please approve the router first using the approval transaction.`,
-              needsApproval: true,
-              currentAllowance: allowance,
-              requiredAmount: totalAmountFormatted,
-            }),
-            updatedPayroll: updated,
-          };
+          preflightWarning += ` Allowance: ${allowance} USDC (need ${totalAmountFormatted}).`;
         }
       } catch (err) {
-        // If pre-flight checks fail, still generate the tx but warn
         console.warn("Pre-flight check failed:", (err as Error).message);
       }
 
-      // Verify payroll date is still in the future
-      if (updated.payrollDate <= Math.floor(Date.now() / 1000)) {
+      // Verify payroll date is still in the future (10 min grace)
+      if (updated.payrollDate <= Math.floor(Date.now() / 1000) - 600) {
         return {
           result: JSON.stringify({ error: "Payroll date has already passed. Please set a new future date." }),
           updatedPayroll: updated,
@@ -673,6 +681,7 @@ async function executeTool(
           to: txData.to,
           data: txData.data,
           description: `Deposit ${totalAmountFormatted} USDC for payroll into Uniswap V4`,
+          warning: preflightWarning || undefined,
           payrollDate: new Date(updated.payrollDate * 1000).toISOString(),
           recipientCount: updated.recipients.length,
         }),
