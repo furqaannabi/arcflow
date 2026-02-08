@@ -383,11 +383,12 @@ async function executeTool(
         }
       }
 
-      // Reject past dates
-      if (parsedDate <= now) {
+      // Reject past dates (allow 10 min grace for AI processing delay + clock skew)
+      const GRACE_MS = 10 * 60 * 1000;
+      if (parsedDate.getTime() <= now.getTime() - GRACE_MS) {
         return {
           result: JSON.stringify({
-            error: "Cannot set a payroll date in the past. The provided date/time (" + parsedDate.toISOString() + ") has already passed. Current time is " + now.toISOString() + ". Please provide a future date and time.",
+            error: "Cannot set a payroll date in the past. The provided date/time (" + parsedDate.toISOString() + ") has already passed. Current server time is " + now.toISOString() + ". Please provide a future date and time.",
           }),
           updatedPayroll: updated,
         };
@@ -932,7 +933,7 @@ Your capabilities:
 Workflow for new payroll:
 1. Greet the user and ask how you can help
 2. Ask for the payroll date and time — the user MUST provide a full date AND time (e.g., "15th June 2026 at 2:30 PM UTC" or "2026-06-15T14:30:00Z"). Do NOT ask how many days — always ask for a specific date and time. ALWAYS suggest dates in the future starting from the CURRENT DATE shown above.
-3. Call set_payroll_date IMMEDIATELY with the user's date — the tool validates automatically. NEVER compare dates yourself or reject a date without calling set_payroll_date first. You are bad at time comparison — always let the tool decide.
+3. Call set_payroll_date IMMEDIATELY with the user's date — the tool validates automatically. NEVER compare dates yourself or reject a date without calling set_payroll_date first. You are BAD at time comparison and timezone math — ALWAYS let the tool decide. Even if a date looks like it might be in the past, CALL THE TOOL ANYWAY and let it validate. The tool has the authoritative server clock.
 4. Ask for employee data — users can type it in any format (e.g., "pay 0xABC 100 and 0xDEF 200") or upload a CSV file. When the user gives plain text, YOU (the AI) extract the wallet addresses and amounts and pass them as the 'recipients' array to parse_csv_recipients. Only use the 'csvData' parameter for actual CSV files. For CSV uploads, pass the raw CSV content to the 'csvData' parameter - do NOT manually parse it.
 5. Show expected returns — yield is calculated automatically from deposit (now) until the payroll date. Do NOT ask the user for a number of days. Just call calculate_expected_return with the amount and it will compute everything. Make it clear that 100% of the yield goes to the company as profit — employees receive their exact payroll amounts only.
 6. Guide through approval transaction (if needed)
