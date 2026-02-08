@@ -49,6 +49,9 @@ export default function Sidebar({ onNewChat, onSessionChange, activeSessionId: e
   useEffect(() => {
     if (sessions.length > 0) {
       localStorage.setItem('arcflow_sessions', JSON.stringify(sessions));
+    } else {
+      // Clear localStorage when no sessions remain
+      localStorage.removeItem('arcflow_sessions');
     }
   }, [sessions]);
 
@@ -122,13 +125,8 @@ export default function Sidebar({ onNewChat, onSessionChange, activeSessionId: e
     
     const remainingSessions = sessions.filter((s) => s.id !== id);
     setSessions(remainingSessions);
+    // Note: localStorage sync is handled by useEffect
     
-    // Update localStorage immediately
-    if (remainingSessions.length === 0) {
-      localStorage.removeItem('arcflow_sessions');
-    } else {
-      localStorage.setItem('arcflow_sessions', JSON.stringify(remainingSessions));
-    }
     
     // If we're deleting the active session, switch to another one
     const isActiveSession = effectiveActiveSessionId === id;
