@@ -103,17 +103,6 @@ const CHAIN_CONFIGS: ChainConfig[] = [
     usdc: addressesJson.sepolia.usdc as Address,
     defiLlamaName: "Ethereum",
   },
-  {
-    id: CHAIN_IDS.ARC_TESTNET,
-    name: "Arc Testnet",
-    chain: arcTestnet,
-    router: addressesJson.arcTestnet.distributor as Address,
-    stateManager: addressesJson.arcTestnet.distributor as Address,
-    migration: addressesJson.arcTestnet.distributor as Address,
-    distributor: addressesJson.arcTestnet.distributor as Address,
-    usdc: addressesJson.arcTestnet.usdc as Address,
-    defiLlamaName: "Arc",
-  },
 ];
 
 // Arc Chain config for distribution
