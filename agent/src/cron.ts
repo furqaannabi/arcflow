@@ -156,6 +156,7 @@ export class PayrollCron {
   private privateKey: string | undefined;
   private intervalId: NodeJS.Timeout | null = null;
   private apyIntervalId: NodeJS.Timeout | null = null;
+  private distIntervalId: NodeJS.Timeout | null = null;
   private results: CronResult[] = [];
   private apyResults: ApyUpdateResult[] = [];
   private rebalanceResults: RebalanceResult[] = [];
@@ -198,18 +199,32 @@ export class PayrollCron {
   }
 
   /**
-   * Check for ready payrolls on a specific chain
+   * Get all active IDs then filter off-chain for ready payrolls
    */
   async checkReadyPayrollsOnChain(chainConfig: ChainConfig): Promise<bigint[]> {
     const client = this.getClient(chainConfig);
-
-    const readyIds = await client.readContract({
+    const allIds = await client.readContract({
       address: chainConfig.router,
       abi: ROUTER_ABI,
-      functionName: "getReadyPayrolls",
-    });
+      functionName: "getActiveIds",
+    }) as bigint[];
 
-    return readyIds as bigint[];
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    const chainBigInt = BigInt(chainConfig.id);
+    const ready: bigint[] = [];
+
+    for (const pid of allIds) {
+      const pos = await client.readContract({
+        address: chainConfig.router,
+        abi: ROUTER_ABI,
+        functionName: "getPos",
+        args: [pid],
+      }) as any;
+      if (pos.liquidity > 0n && pos.payrollDate <= now && pos.currentChainId === chainBigInt && !pos.executed) {
+        ready.push(pid);
+      }
+    }
+    return ready;
   }
 
   /**
@@ -256,43 +271,50 @@ export class PayrollCron {
   async executePayroll(chainConfig: ChainConfig, payrollId: bigint): Promise<string> {
     const walletClient = this.getWalletClient(chainConfig);
     const client = this.getClient(chainConfig);
-    const account = privateKeyToAccount(this.privateKey as `0x${string}`);
 
-    // 1. Read position data BEFORE execution (getPos includes recipients info)
-    const pos = await contractService.getPos(payrollId);
-    console.log(`[DIST] Position #${payrollId}: provider=${pos.provider}, amount=${pos.usdcDeposited}, date=${pos.payrollDate}`);
-
-    // 2. Look up recipients from MongoDB
-    const payrollDoc = await Payroll.findOne({
-      payrollId: Number(payrollId),
-      status: "deposited",
-    });
-
-    if (!payrollDoc) {
-      console.warn(`[DIST] No MongoDB payroll found for #${payrollId}, falling back to on-chain recipients`);
-    }
-
-    // 3. Execute payroll on-chain (Router removes LP, deposits to Gateway for agent)
+    // Execute payroll on-chain (Router removes LP, deposits to Gateway for agent)
     const executeTxHash = await walletClient.writeContract({
       address: chainConfig.router,
       abi: ROUTER_ABI,
       functionName: "execute",
       args: [payrollId],
     });
-    console.log(`[DIST] Execute TX: ${executeTxHash}`);
+    console.log(`[EXEC] Execute TX: ${executeTxHash}`);
 
-    // Wait for execution to confirm
     await client.waitForTransactionReceipt({ hash: executeTxHash });
-    console.log(`[DIST] Execute confirmed`);
+    console.log(`[EXEC] Execute confirmed for payroll #${payrollId}`);
 
-    // 4. Create and sign EIP-712 burn intent to transfer from source chain → Arc
+    // Update MongoDB status
+    await Payroll.updateOne(
+      { payrollId: Number(payrollId) },
+      { status: "executed" },
+    );
+
+    return executeTxHash;
+  }
+
+  /**
+   * Distribute an executed payroll: Gateway bridge → Arc distributor → markDistributed
+   */
+  async distributePayroll(chainConfig: ChainConfig, payrollId: bigint): Promise<string> {
+    const walletClient = this.getWalletClient(chainConfig);
+    const client = this.getClient(chainConfig);
+    const account = privateKeyToAccount(this.privateKey as `0x${string}`);
+
+    // 1. Read position data
+    const pos = await contractService.getPos(payrollId);
+    console.log(`[DIST] Position #${payrollId}: provider=${pos.provider}, amount=${pos.usdcDeposited}`);
+
+    // 2. Look up recipients from MongoDB
+    const payrollDoc = await Payroll.findOne({ payrollId: Number(payrollId) });
+
+    // 3. Check Gateway balance for agent
     const sourceDomain = GATEWAY_DOMAINS[chainConfig.id];
     const destDomain = GATEWAY_DOMAINS[CHAIN_IDS.ARC_TESTNET];
     const sourceUsdc = chainConfig.usdc;
     const destUsdc = addressesJson.arcTestnet.usdc as Address;
     const distributorAddr = addressesJson.arcTestnet.distributor as Address;
 
-    // Check Gateway balance for agent
     const gatewayBalance = await client.readContract({
       address: GATEWAY_WALLET as Address,
       abi: GATEWAY_WALLET_ABI,
@@ -301,8 +323,11 @@ export class PayrollCron {
     }) as bigint;
     console.log(`[DIST] Gateway available balance: ${gatewayBalance}`);
 
-    const transferValue = gatewayBalance; // Transfer all available balance
+    if (gatewayBalance === 0n) {
+      throw new Error("No Gateway balance available yet");
+    }
 
+    // 4. Sign EIP-712 burn intent: source chain → Arc
     const burnIntent = {
       maxBlockHeight: maxUint256,
       maxFee: MAX_FEE,
@@ -315,10 +340,10 @@ export class PayrollCron {
         sourceToken: sourceUsdc,
         destinationToken: destUsdc,
         sourceDepositor: account.address,
-        destinationRecipient: distributorAddr, // Mint directly to distributor
+        destinationRecipient: distributorAddr,
         sourceSigner: account.address,
         destinationCaller: zeroAddress,
-        value: transferValue,
+        value: gatewayBalance,
         salt: ("0x" + randomBytes(32).toString("hex")) as Hex,
         hookData: "0x" as Hex,
       },
@@ -347,29 +372,46 @@ export class PayrollCron {
     const burnSignature = await account.signTypedData(typedData as any);
     console.log(`[DIST] Burn intent signed`);
 
-    // 5. Submit burn intent to Gateway API
+    // 5. Submit to Gateway API (retry for indexing delay)
     console.log(`[DIST] Submitting to Gateway API...`);
     const requests = [{ burnIntent: typedData.message, signature: burnSignature }];
+    const body = JSON.stringify(requests, (_key, value) =>
+      typeof value === "bigint" ? value.toString() : value,
+    );
 
-    const response = await fetch(GATEWAY_API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(requests, (_key, value) =>
-        typeof value === "bigint" ? value.toString() : value,
-      ),
-    });
+    let gatewayResponse: any;
+    const MAX_RETRIES = 10;
+    const RETRY_DELAY = 15_000;
 
-    if (!response.ok) {
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      const response = await fetch(GATEWAY_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+
+      if (response.ok) {
+        gatewayResponse = await response.json();
+        console.log(`[DIST] Gateway API response received`);
+        break;
+      }
+
       const errText = await response.text();
+      if (response.status === 400 && errText.includes("Insufficient balance") && attempt < MAX_RETRIES) {
+        console.log(`[DIST] Gateway not indexed yet, retrying in ${RETRY_DELAY / 1000}s (${attempt}/${MAX_RETRIES})...`);
+        await new Promise(r => setTimeout(r, RETRY_DELAY));
+        continue;
+      }
+
       console.error(`[DIST] Gateway API error: ${response.status} ${errText}`);
       throw new Error(`Gateway API failed: ${response.status}`);
     }
 
-    const gatewayResponse = await response.json();
-    console.log(`[DIST] Gateway API response received`);
+    if (!gatewayResponse) throw new Error("Gateway API failed after max retries");
+
     const { attestation, signature: gatewaySig } = gatewayResponse;
 
-    // 6. Sign payroll state hash (ETH_CHAIN_ID = 1 to match distributor)
+    // 6. Build recipients + sign state hash
     const recipients = payrollDoc
       ? payrollDoc.recipients.map(r => ({
           wallet: r.wallet as Address,
@@ -394,11 +436,10 @@ export class PayrollCron {
       ),
     );
 
-    // Sign as eth signed message (matches toEthSignedMessageHash in distributor)
     const stateSignature = await account.signMessage({ message: { raw: stateHash as Hex } });
     console.log(`[DIST] State signature created`);
 
-    // 7. Call distributor.mintVerifyAndDistribute on Arc Chain
+    // 7. Call distributor on Arc Chain
     console.log(`[DIST] Calling distributor on Arc Chain...`);
     const arcWalletClient = this.getArcWalletClient();
     const arcClient = this.getClient(chainConfig, true);
@@ -423,14 +464,84 @@ export class PayrollCron {
     await arcClient.waitForTransactionReceipt({ hash: distTxHash });
     console.log(`[DIST] Distribution confirmed on Arc Chain!`);
 
-    // 8. Update MongoDB status to settled
+    // 8. Mark distributed on-chain + MongoDB
+    const markTxHash = await walletClient.writeContract({
+      address: chainConfig.router,
+      abi: ROUTER_ABI,
+      functionName: "markDistributed",
+      args: [payrollId],
+    });
+    await client.waitForTransactionReceipt({ hash: markTxHash });
+    console.log(`[DIST] Marked distributed on-chain: ${markTxHash}`);
+
     if (payrollDoc) {
       payrollDoc.status = "settled";
+      payrollDoc.distributed = true;
       await payrollDoc.save();
-      console.log(`[DIST] Payroll #${payrollId} status updated to settled`);
     }
 
-    return executeTxHash;
+    return distTxHash;
+  }
+
+  /**
+   * Check and distribute pending payrolls on a specific chain
+   */
+  async checkPendingDistributions(chainConfig: ChainConfig): Promise<bigint[]> {
+    const client = this.getClient(chainConfig);
+    const allIds = await client.readContract({
+      address: chainConfig.router,
+      abi: ROUTER_ABI,
+      functionName: "getActiveIds",
+    }) as bigint[];
+
+    const pending: bigint[] = [];
+    for (const pid of allIds) {
+      const pos = await client.readContract({
+        address: chainConfig.router,
+        abi: ROUTER_ABI,
+        functionName: "getPos",
+        args: [pid],
+      }) as any;
+      if (pos.executed && !pos.distributed) {
+        pending.push(pid);
+      }
+    }
+    return pending;
+  }
+
+  /**
+   * Distribution cron tick — picks up executed-but-not-distributed payrolls
+   */
+  async distributionTick(): Promise<void> {
+    try {
+      for (const chainConfig of CHAIN_CONFIGS) {
+        try {
+          const pendingIds = await this.checkPendingDistributions(chainConfig);
+          if (pendingIds.length === 0) continue;
+
+          console.log(`[DIST-CRON] ${chainConfig.name}: Found ${pendingIds.length} pending distribution(s): ${pendingIds.map(id => id.toString()).join(", ")}`);
+
+          if (!this.privateKey) {
+            console.log("[DIST-CRON] No private key - skipping distribution");
+            continue;
+          }
+
+          for (const payrollId of pendingIds) {
+            try {
+              console.log(`[DIST-CRON] Distributing payroll #${payrollId} from ${chainConfig.name}...`);
+              const txHash = await this.distributePayroll(chainConfig, payrollId);
+              console.log(`[DIST-CRON] Payroll #${payrollId} distributed: ${txHash}`);
+            } catch (error) {
+              console.error(`[DIST-CRON] Failed to distribute payroll #${payrollId}:`, (error as Error).message);
+            }
+          }
+        } catch (error) {
+          console.error(`[DIST-CRON] ${chainConfig.name}: Error:`, (error as Error).message);
+        }
+      }
+    } catch (error) {
+      console.error("[DIST-CRON] Error:", (error as Error).message);
+    }
   }
 
   /**
@@ -783,6 +894,12 @@ export class PayrollCron {
 
     // Then run on 6-hour interval
     this.apyIntervalId = setInterval(() => this.apyTick(), APY_INTERVAL);
+
+    // Start distribution cron (every 2 minutes)
+    const DIST_INTERVAL = 2 * 60 * 1000;
+    console.log(`[DIST-CRON] Starting distribution cron (interval: ${DIST_INTERVAL / 1000}s)`);
+    this.distributionTick();
+    this.distIntervalId = setInterval(() => this.distributionTick(), DIST_INTERVAL);
   }
 
   /**
@@ -798,6 +915,11 @@ export class PayrollCron {
       clearInterval(this.apyIntervalId);
       this.apyIntervalId = null;
       console.log("[CRON] APY monitoring stopped");
+    }
+    if (this.distIntervalId) {
+      clearInterval(this.distIntervalId);
+      this.distIntervalId = null;
+      console.log("[DIST-CRON] Distribution cron stopped");
     }
   }
 

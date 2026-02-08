@@ -79,8 +79,31 @@ deploy_arc() {
     echo -e "${GREEN}Deployed to Arc Testnet${NC}"
 }
 
+# Ensure arcTestnet.json has required fields (usdc, circleDomain)
+ensure_arc_defaults() {
+    local arc_file="deployments/arcTestnet.json"
+    if [ ! -f "$arc_file" ]; then
+        echo -e "${YELLOW}Creating default arcTestnet.json...${NC}"
+        cat > "$arc_file" << 'ARCEOF'
+{
+  "arcTestnet": {
+    "distributor": "0x792504ceb7DE2C0e697a8bDdfa096d1e2CA678d3",
+    "gatewayMinter": "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B",
+    "circleDomain": 26,
+    "usdc": "0x3600000000000000000000000000000000000000"
+  }
+}
+ARCEOF
+    elif ! grep -q '"usdc"' "$arc_file"; then
+        echo -e "${YELLOW}Patching arcTestnet.json with usdc + circleDomain...${NC}"
+        # Replace closing braces to inject usdc and fix circleDomain
+        sed -i 's/"circleDomain": [0-9]*/"circleDomain": 26,\n    "usdc": "0x3600000000000000000000000000000000000000"/' "$arc_file" 2>/dev/null || true
+    fi
+}
+
 # Merge all deployments
 merge_deployments() {
+    ensure_arc_defaults
     echo -e "${GREEN}Merging deployments...${NC}"
     forge script script/02_MergeDeployments.s.sol
     echo -e "${GREEN}Deployments merged to ../agent/src/addresses.json${NC}"

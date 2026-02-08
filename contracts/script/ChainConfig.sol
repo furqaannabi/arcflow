@@ -13,7 +13,7 @@ library ChainConfig {
     uint32 constant CIRCLE_DOMAIN_ETHEREUM = 0;
     uint32 constant CIRCLE_DOMAIN_ARBITRUM = 3;
     uint32 constant CIRCLE_DOMAIN_BASE = 6;
-    uint32 constant CIRCLE_DOMAIN_ARC = 9;
+    uint32 constant CIRCLE_DOMAIN_ARC = 26;
 
     struct Config {
         uint256 chainId;

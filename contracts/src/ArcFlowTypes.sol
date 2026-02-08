@@ -21,6 +21,7 @@ struct LPPosition {
     PayrollRecipient[] recipients;
     bytes32 recipientsHash;
     bool executed;
+    bool distributed;
 }
 
 struct CallbackData {

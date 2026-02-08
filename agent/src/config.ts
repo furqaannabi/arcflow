@@ -45,7 +45,7 @@ export const CHAIN_IDS = {
 export const GATEWAY_DOMAINS: Record<number, number> = {
   84532: 6,      // Base Sepolia
   11155111: 0,   // Sepolia
-  5042002: 9,    // Arc Testnet
+  5042002: 26,   // Arc Testnet
 };
 
 // Circle Gateway Wallet contract address (same on all EVM testnets)

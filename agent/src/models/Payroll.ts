@@ -14,6 +14,7 @@ export interface IPayroll extends Document {
   chainId: number;
   txHash?: string;
   status: "pending" | "deposited" | "executed" | "settled";
+  distributed: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -40,6 +41,7 @@ const PayrollSchema = new Schema<IPayroll>(
       enum: ["pending", "deposited", "executed", "settled"],
       default: "pending",
     },
+    distributed: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

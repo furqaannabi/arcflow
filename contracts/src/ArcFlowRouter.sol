@@ -121,7 +121,8 @@ contract ArcFlowRouter is ArcFlowBase {
             currentChainId: block.chainid,
             migrationCount: 0,
             recipientsHash: rHash,
-            executed: false
+            executed: false,
+            distributed: false
         });
 
         totalLiquidity += liq;
@@ -156,8 +157,6 @@ contract ArcFlowRouter is ArcFlowBase {
         totalLiquidity -= liq;
         p.liquidity = 0;
         p.executed = true;
-
-        _removePayroll(pid);
 
         emit Withdrawn(pid, p.provider, amt, y);
     }
@@ -215,6 +214,10 @@ contract ArcFlowRouter is ArcFlowBase {
         usdc.approve(address(gatewayWallet), amt);
         gatewayWallet.depositFor(address(usdc), msg.sender, amt);
         emit Executed(pid, amt);
+    }
+
+    function markDistributed(uint256 pid) external onlyAgent {
+        positions[pid].distributed = true;
     }
 
     function cancel(uint256 pid) external returns (uint256 amt) {

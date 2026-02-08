@@ -29,25 +29,11 @@
       "outputs": [{ "name": "amt", "type": "uint256" }]
     },
     {
-      "name": "getReadyPayrolls",
-      "type": "function",
-      "stateMutability": "view",
-      "inputs": [],
-      "outputs": [{ "name": "", "type": "uint256[]" }]
-    },
-    {
       "name": "getActiveIds",
       "type": "function",
       "stateMutability": "view",
       "inputs": [],
       "outputs": [{ "name": "", "type": "uint256[]" }]
-    },
-    {
-      "name": "isPayrollReady",
-      "type": "function",
-      "stateMutability": "view",
-      "inputs": [{ "name": "payrollId", "type": "uint256" }],
-      "outputs": [{ "name": "", "type": "bool" }]
     },
     {
       "name": "getPos",
@@ -70,8 +56,7 @@
             { "name": "sourceChainId", "type": "uint256" },
             { "name": "currentChainId", "type": "uint256" },
             { "name": "migrationCount", "type": "uint256" },
-            { "name": "recipientsHash", "type": "bytes32" },
-            { "name": "executed", "type": "bool" }
+            { "name": "recipientsHash", "type": "bytes32" }
           ]
         }
       ]
@@ -100,6 +85,13 @@
         { "name": "", "type": "uint256" },
         { "name": "", "type": "uint256" }
       ]
+    },
+    {
+      "name": "markDistributed",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [{ "name": "pid", "type": "uint256" }],
+      "outputs": []
     },
     {
       "name": "totalLiquidity",

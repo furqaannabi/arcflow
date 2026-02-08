@@ -262,37 +262,4 @@ abstract contract ArcFlowBase is IUnlockCallback {
         }
     }
 
-    // ============ Ready Payrolls (View) ============
-
-    /// @notice Get all payroll IDs that are ready to execute
-    function getReadyPayrolls() external view returns (uint256[] memory) {
-        uint256 count = 0;
-        for (uint256 i = 0; i < activePayrollIds.length; i++) {
-            LPPosition memory pos = positions[activePayrollIds[i]];
-            if (pos.liquidity > 0 && block.timestamp >= pos.payrollDate && pos.currentChainId == chainId && !pos.executed) {
-                count++;
-            }
-        }
-
-        uint256[] memory ready = new uint256[](count);
-        uint256 idx = 0;
-        for (uint256 i = 0; i < activePayrollIds.length; i++) {
-            uint256 pid = activePayrollIds[i];
-            LPPosition memory pos = positions[pid];
-            if (pos.liquidity > 0 && block.timestamp >= pos.payrollDate && pos.currentChainId == chainId && !pos.executed) {
-                ready[idx++] = pid;
-            }
-        }
-        return ready;
-    }
-
-    /// @notice Check if a specific payroll is ready
-    function isPayrollReady(uint256 payrollId) external view returns (bool) {
-        LPPosition memory pos = positions[payrollId];
-        return
-            pos.liquidity > 0 &&
-            block.timestamp >= pos.payrollDate &&
-            pos.currentChainId == chainId &&
-            !pos.executed;
-    }    
 }
