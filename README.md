@@ -394,6 +394,23 @@ Agent                   Source Chain              Gateway              Target Ch
 | Base Sepolia | 6 |
 | Arc Testnet | 26 |
 
+## Sponsor Technology Usage
+
+**Uniswap V4** — Payroll deposits are split 50/50 into USDC/USDT and added as full-range Uniswap V4 LP positions via `poolManager.modifyLiquidity()`. Funds earn swap fees (3-48% APY) until payday, when liquidity is removed and swapped back to USDC via `poolManager.swap()`.
+[`contracts/src/ArcFlowBase.sol#L157`](https://github.com/furqaannabi/arcflow/blob/main/contracts/src/ArcFlowBase.sol#L157)
+
+**ENS** — Employers can add recipients using ENS names like `vitalik.eth` instead of raw addresses. The agent resolves names via `mainnetClient.getEnsAddress({ name: normalize(ensName) })` using Ethereum mainnet, supporting both the `resolve_ens` tool and inline resolution in CSV uploads.
+[`agent/src/routes/chat.ts#L427`](https://github.com/furqaannabi/arcflow/blob/main/agent/src/routes/chat.ts#L427)
+
+**Arc Chain** — The `ArcPayrollDistributor` on Arc Testnet receives bridged USDC via `gatewayMinter.gatewayMint()`, verifies the payroll state hash on-chain, and distributes pro-rata to each employee wallet with `usdc.safeTransfer(recipients[i].wallet, payout)`.
+[`contracts/src/ArcPayrollDistributor.sol#L164`](https://github.com/furqaannabi/arcflow/blob/main/contracts/src/ArcPayrollDistributor.sol#L164)
+
+**Circle Modular Wallets** — The frontend uses `toCircleSmartAccount()` with WebAuthn passkeys for gasless ERC-4337 smart accounts. Transactions are sent as sponsored UserOperations via `bundlerClient.sendUserOperation({ paymaster: true })` — users pay zero gas.
+[`frontend/src/contexts/AuthContext.tsx#L117`](https://github.com/furqaannabi/arcflow/blob/main/frontend/src/contexts/AuthContext.tsx#L117)
+
+**Circle Gateway Bridge** — After payroll execution, USDC is deposited via `gatewayWallet.depositFor()` and bridged to Arc using EIP-712 signed burn intents submitted to the Gateway API. The distribution cron handles the full flow: balance query, burn intent signing, and `mintVerifyAndDistribute()` on Arc.
+[`contracts/src/ArcFlowRouter.sol#L215`](https://github.com/furqaannabi/arcflow/blob/main/contracts/src/ArcFlowRouter.sol#L215)
+
 ## Agent Cron Jobs
 
 | Cron | Interval | What It Does |
