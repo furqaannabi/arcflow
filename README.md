@@ -410,6 +410,24 @@ Cross-chain USDC transfers via EIP-712 signed burn intents:
 6. Distributor verifies state hash + distributes pro-rata
 ```
 
+### ENS Resolution
+
+Employee wallet addresses support ENS names — resolved via Ethereum mainnet:
+
+```
+User: "Add recipient vitalik.eth for 5000 USDC"
+Agent: resolve_ens("vitalik.eth")
+       → 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+       Adds to recipient list with resolved address
+```
+
+| Feature | Detail |
+|---------|--------|
+| Resolution | `viem/ens` `normalize()` + `getEnsAddress()` via Ethereum mainnet |
+| RPC | `https://eth.llamarpc.com` (public mainnet) |
+| Where used | `resolve_ens` tool + inline in `set_recipients` (auto-detects `.eth` names) |
+| CSV support | Upload CSV with ENS names as wallet column — resolved automatically |
+
 ### ArcPayrollDistributor (Arc Chain)
 
 Receives bridged USDC and distributes to employees:
@@ -466,8 +484,11 @@ npm run dev
 User: "Set up payroll for March 1st"
 Agent: Sets payroll date, asks for recipients
 
+User: "Add vitalik.eth for 5000 USDC and 0xAbC... for 3000 USDC"
+Agent: Resolves ENS → 0xd8dA..., adds both recipients
+
 User: uploads employees.csv
-Agent: Parses CSV, shows recipients + amounts
+Agent: Parses CSV (supports ENS names + 0x addresses), shows recipients + amounts
 
 User: "My wallet is 0x50A1..."
 Agent: Returns approve() + deposit() transactions to sign
